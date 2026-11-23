@@ -303,7 +303,7 @@ func _build_ui() -> void:
 	_add_number(armor_controls, "target.module_height", "模块外高 / m", 0.04, 0.3, 0.001)
 	_add_number(armor_controls, "target.armor_width", "命中区宽（近似）/ m", 0.05, 0.3, 0.005)
 	_add_number(armor_controls, "target.armor_height", "命中区高（近似）/ m", 0.04, 0.3, 0.001)
-	_add_number(armor_controls, "target.lightbar_spacing", "灯条间距 / m", 0.05, 0.3, 0.005)
+	_add_number(armor_controls, "target.lightbar_spacing", "理想观测灯距 / m", 0.05, 0.3, 0.005)
 	outpost_controls = VBoxContainer.new()
 	column.add_child(outpost_controls)
 	_add_number(outpost_controls, "outpost.forward", "前哨站距初始相机 / m", 1, 20, 0.1)

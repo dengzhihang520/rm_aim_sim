@@ -4,6 +4,7 @@
 
 | 资源 | 本仓库位置 | 上游 / 固定版本 | 许可证 |
 |---|---|---|---|
+| 官方大小装甲 CAD 网格 | `assets/armor_cad/*.glb` | [官方 AM02](https://www.robomaster.com/zh-CN/products/components/detail/2600) / [AM12](https://www.robomaster.com/zh-CN/products/components/detail/2599) STEP；[来源与哈希](assets/armor_cad/geometry.json) | DJI / RoboMaster 原厂版权保留，不随项目 MIT 重新授权 |
 | 装甲数字与哨兵图案 | `assets/stickers/*.png` | [tff345/label-robomaster](https://github.com/tff345/label-robomaster)，`b517820cc8591c056098b3ac808338b084b6eabd` | [MIT，Copyright (c) 2021 xinyang](assets/third_party/label_robomaster/LICENSE) |
 | 2026前哨站标识描摹 | `assets/outpost/mark.svg` | [2026官方规则V2.2.0](https://bbs.robomaster.com/wiki/20204847/809871?source=7)图5-17；[清单](assets/outpost/sources.json) | DJI / RoboMaster版权保留，不随项目MIT重新授权 |
 | 能量机关 R 标识描摹 | `assets/rune/center_r.svg` | [2027 官方规则 V1.0.0](https://bbs-web-static.robomaster.com/451e5737ba5d4463909a3013456a4e551792055647969/RoboMaster%202027%20%E6%9C%BA%E7%94%B2%E5%A4%A7%E5%B8%88%E8%B6%85%E7%BA%A7%E5%AF%B9%E6%8A%97%E8%B5%9B%E6%AF%94%E8%B5%9B%E8%A7%84%E5%88%99%E6%89%8B%E5%86%8CV1.0.0%EF%BC%8820261015%EF%BC%89.pdf) 图 4-33；[清单](assets/rune/sources.json) | DJI / RoboMaster 版权保留，不随项目 MIT 重新授权 |
@@ -16,3 +17,5 @@ Godot 引擎不随 Git 仓库分发，`tools/setup_godot.py` 从官方发布页�
 示例中可选使用的 Python、NumPy、OpenCV 由使用者另行安装，不作为本仓库内嵌代码重新授权。自定义模型、检测网络权重和其他外部素材由使用者自行确认授权。
 
 本项目不是 RoboMaster / DJI 官方产品，未获得官方背书。规则与产品文档链接用于解释参数来源；仿真近似、图案或品牌名称的使用不代表官方认证，也不授予商标权。
+
+官方 CAD 网格通过 `tools/convert_official_armor.py` 离线转换；运行不依赖 OpenCASCADE。可选转换依赖固定在 `tools/cad-requirements.txt`，不随项目源码内嵌分发。结构与光学假设见 [装甲 CAD 说明](docs/armor_cad.md)。

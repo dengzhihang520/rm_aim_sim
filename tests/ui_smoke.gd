@@ -20,7 +20,8 @@ func check(condition: bool, message: String) -> void:
 
 func wait_sim(main: Node, duration: float) -> void:
 	var until: float = main.model.time + duration
-	for _frame in range(120):
+	var deadline = Time.get_ticks_msec() + 5000
+	while Time.get_ticks_msec() < deadline:
 		await process_frame
 		if main.model.time >= until:
 			return
@@ -47,17 +48,29 @@ func click_hold(button: Button, pressed: bool) -> void:
 	Input.flush_buffered_events()
 
 
+func armor_meshes(node: Node) -> Array[MeshInstance3D]:
+	var meshes: Array[MeshInstance3D] = []
+	if node is MeshInstance3D:
+		meshes.append(node)
+	for child in node.get_children():
+		meshes.append_array(armor_meshes(child))
+	return meshes
+
+
 func check_rendered_extent(main: Node, diameter: float) -> void:
 	var center: Vector3 = WorldView.to_engine(main.model.target_pose(main.model.time).center)
 	var furthest = 0.0
+	var count = 0
 	for plate in main.world.plates:
-		for child in plate.get_children():
-			if child is MeshInstance3D:
-				var bounds: AABB = child.get_aabb()
-				for corner in range(8):
-					var point: Vector3 = child.global_transform * bounds.get_endpoint(corner) - center
-					furthest = maxf(furthest, Vector2(point.x, point.z).length())
-	check(absf(furthest * 2.0 - diameter) < 2e-6, "actual rendered board and lamp corners match rotation envelope")
+		for mesh in armor_meshes(plate):
+			count += 1
+			var bounds: AABB = mesh.get_aabb()
+			for corner in range(8):
+				var point: Vector3 = mesh.global_transform * bounds.get_endpoint(corner) - center
+				furthest = maxf(furthest, Vector2(point.x, point.z).length())
+	check(count > 0, "rendered extent visits actual nested CAD meshes")
+	# STEP bounds enclose the tessellated surface; allow its 0.12 mm linear tolerance.
+	check(absf(furthest * 2.0 - diameter) < 0.0005, "actual CAD corners match conservative rotation envelope")
 
 
 func region_peak(image: Image, center: Vector2, half_size: Vector2i) -> float:
@@ -91,14 +104,17 @@ func capture_flash_frame(main: Node, stream: RefCounted, transport: RefCounted, 
 	var image: Image = main.world.sensor_viewport.get_texture().get_image()
 	var bytes = FileAccess.get_file_as_bytes(transport.ipc.directory.path_join(metadata.frame_file))
 	check(image.get_data() == bytes, "flashing preview matches actual shared-memory pixels")
-	return {"main": main.world.raw_sensor_viewport.get_texture().get_image(), "sensor": image, "metadata": metadata}
+	return {"main": main.world.raw_sensor_viewport.get_texture().get_image(), "sensor": image, "mask": main.world.cad_emission.viewport.get_texture().get_image(), "metadata": metadata}
 
 
 func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> void:
 	var saved_settings: Dictionary = main.model.settings.duplicate(true)
 	var saved_paused: bool = main.model.paused
-	for team in ["blue", "red"]:
+	for scenario in [{"robot": "infantry_3_2026", "team": "blue"}, {"robot": "infantry_3_2026", "team": "red"},
+		{"robot": "hero_2026", "team": "blue"}, {"robot": "hero_2026", "team": "red"}]:
+		var team: String = scenario.team
 		var settings = saved_settings.duplicate(true)
+		Presets.apply_robot(settings, scenario.robot)
 		settings.appearance.team = team
 		settings.target.translate = false
 		settings.target.rotate = false
@@ -120,10 +136,31 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 		var bottom_left = Vector2(corners[3][0], corners[3][1])
 		var bottom_right = Vector2(corners[2][0], corners[2][1])
 		var lamp_center = (top_left + bottom_left) * 0.5
-		# Sample the LED's center column; adjacent pixels may contain the ground grid behind it.
-		var lamp_region = Vector2i(0, 4)
+		# Nominal observation points need not coincide with the actual CAD guide cover.
+		var mask: Image = lit.mask
+		var near = Vector2i(lamp_center)
+		var lamp_pixels: Array[Vector2i] = []
+		for y in range(maxi(0, near.y - 12), mini(mask.get_height(), near.y + 13)):
+			for x in range(maxi(0, near.x - 12), mini(mask.get_width(), near.x + 13)):
+				if mask.get_pixel(x, y).r > 0.5:
+					lamp_pixels.append(Vector2i(x, y))
+		check(not lamp_pixels.is_empty(), "actual CAD guide cover is visible in emission mask")
+		if lamp_pixels.is_empty():
+			continue
+		lamp_center = Vector2.ZERO
+		var left = mask.get_width()
+		for point in lamp_pixels:
+			lamp_center += Vector2(point)
+			left = mini(left, point.x)
+		lamp_center /= lamp_pixels.size()
+		var closest = lamp_pixels[0]
+		for point in lamp_pixels:
+			if Vector2(point).distance_squared_to(lamp_center) < Vector2(closest).distance_squared_to(lamp_center):
+				closest = point
+		lamp_center = Vector2(closest)
+		var lamp_region = Vector2i.ZERO
 		var digit_center = (top_left + bottom_right) * 0.5
-		var halo_center = lamp_center + (lamp_center - digit_center) * 0.3
+		var halo_center = Vector2(left - 4, lamp_center.y)
 		var sticker: Sprite3D = main.world.plates[armor_id].get_node("ArmorSticker")
 		check(main.world.plate_materials[armor_id].albedo_color == Presets.team_color(team), "flash starts at team color")
 		main.model._spawn(main.model.time, solution.yaw, solution.pitch)
@@ -136,20 +173,22 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 		check(main.model.stats.hit == 1 and main.model.health > 0, "rendered flash follows a real nonlethal collision")
 		var dark: Dictionary = await capture_flash_frame(main, stream, transport, team + "_dark")
 		check(not main.world.plate_materials[armor_id].emission_enabled
-			and not main.world.lamp_glows[armor_id].visible, "hit disables both the LED mesh and optical glare")
+			and main.world.cad_emission.lights[armor_id].albedo_color == Color.BLACK, "hit disables both the LED mesh and optical glare")
 		for index in range(4):
 			if index != armor_id:
-				check(main.world.plate_materials[index].emission_enabled and main.world.lamp_glows[index].visible,
+				check(main.world.plate_materials[index].emission_enabled and main.world.cad_emission.lights[index].albedo_color == Color.WHITE,
 					"unhit armor retains independent lit material and glare")
-		check(main.world.brightness_material.get_shader_parameter("lamp_count") == 0
+		check(region_peak(dark.mask, lamp_center, lamp_region) < 0.01
 			and dark.metadata.camera.armors.is_empty(), "hit disables reconstructed sensor emission and ideal observations")
 		for view in ["main", "sensor"]:
 			check(region_peak(dark[view], lamp_center, lamp_region)
 				< region_peak(lit[view], lamp_center, lamp_region) * 0.5,
-				team + " lamp actually darkens in " + view + " pixels")
-			var halo_change = region_increase(lit[view], dark[view], halo_center, Vector2i(1, 2))
-			check(halo_change > 0.03,
-				team + " local halo outside the physical lamp also extinguishes in " + view + " (pixel change %.3f)" % halo_change)
+				team + " lamp actually darkens in " + view + " pixels (lit %.3f, dark %.3f)" % [
+					region_peak(lit[view], lamp_center, lamp_region), region_peak(dark[view], lamp_center, lamp_region)])
+			if view == "sensor":
+				var halo_change = region_increase(lit[view], dark[view], halo_center, Vector2i(1, 2))
+				check(halo_change > 0.03,
+					team + " local sensor halo extinguishes outside the physical lamp (pixel change %.3f)" % halo_change)
 			check(region_peak(dark[view], digit_center, Vector2i(8, 12)) > 0.4,
 				"printed number remains visible while LEDs are off")
 		check(sticker.visible and is_instance_valid(sticker), "hit does not remove the board or sticker")
@@ -162,7 +201,7 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 		var restored: Dictionary = await capture_flash_frame(main, stream, transport, team + "_restored")
 		check(main.world.plate_materials[armor_id].emission_enabled
 			and main.world.plate_materials[armor_id].albedo_color == Presets.team_color(team)
-			and main.world.lamp_glows[armor_id].visible, "timeout restores the original team color and glare")
+			and main.world.cad_emission.lights[armor_id].albedo_color == Color.WHITE, "timeout restores the original team color and glare")
 		check(not restored.metadata.camera.armors.is_empty(), "timeout restores ideal observation")
 		for view in ["main", "sensor"]:
 			check(region_peak(restored[view], lamp_center, lamp_region)
@@ -176,12 +215,35 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 		var dead: Dictionary = await capture_flash_frame(main, stream, transport, team + "_dead")
 		check(main.model.health == 0 and dead.metadata.camera.armors.is_empty(), "lethal collision stays dark beyond flash timeout")
 		for index in range(4):
-			check(not main.world.plate_materials[index].emission_enabled and not main.world.lamp_glows[index].visible,
+			check(not main.world.plate_materials[index].emission_enabled and main.world.cad_emission.lights[index].albedo_color == Color.BLACK,
 				"death keeps all armor lights and glare off")
 	main.model.reset(saved_settings)
 	main.model.paused = saved_paused
 	main.world.rebuild_target()
 	main.world.update_world()
+
+
+func check_custom_model(main: Node) -> void:
+	var original: String = main.model.settings.appearance.armor_model
+	var session: String = main.model.session_id
+	var calibration: Array = main.model.camera_observation().K.duplicate()
+	main.model.settings.appearance.armor_model = ProjectSettings.globalize_path("res://assets/armor_cad/AM02.glb")
+	main.world.rebuild_target()
+	main.world.update_world()
+	await RenderingServer.frame_post_draw
+	check(main.world.plates[0].get_node_or_null("OfficialCADArmor") == null and not armor_meshes(main.world.plates[0]).is_empty(), "custom GLB still loads through existing path")
+	check(main.world.lamp_glows.size() == 4 and main.world.cad_emission.viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED,
+		"custom model keeps its existing glow pipeline and disables built-in CAD mask")
+	main.model.settings.appearance.armor_model = original
+	main.world.rebuild_target()
+	main.world.update_world()
+	await RenderingServer.frame_post_draw
+	check(main.world.plates[0].get_node_or_null("OfficialCADArmor") != null and main.world.lamp_glows.is_empty(),
+		"restoring built-in armor restores CAD without obsolete rectangular glare")
+	check(main.world.cad_emission.viewport.render_target_update_mode == SubViewport.UPDATE_ALWAYS,
+		"restoring built-in armor enables its emission mask")
+	check(main.model.session_id == session and main.model.camera_observation().K == calibration,
+		"changing appearance preserves IPC session and camera calibration")
 
 
 func check_field_precision(main: Node) -> void:
@@ -292,7 +354,7 @@ func _run() -> void:
 	check(main.first_person_image.texture == main.world.raw_sensor_viewport.get_texture(),
 		"first person displays the unprocessed camera texture")
 	check(main.first_person_image.texture != main.world.sensor_viewport.get_texture()
-		and main.world.sensor_viewport.disable_3d, "exposure output is a separate 2D pass without duplicate 3D rendering")
+		and main.world.sensor_viewport.disable_3d, "exposure output is a separate 2D pass")
 	check(main.model.settings.target.center.x == 4.0, "initial distance is 4 m")
 	check(is_equal_approx(main.fields["target.center.z"].value, 0.2), "initial lower-edge slider is 200 mm")
 	check(is_equal_approx(main.fields["target.height_difference"].value, -0.1), "initial height difference is -100 mm")
@@ -399,13 +461,14 @@ func _run() -> void:
 		"camera exposure leaves environment lighting and scene lamp materials unchanged")
 	main.model.health = 0
 	main.world.update_world()
-	check(main.world.brightness_material.get_shader_parameter("lamp_count") == 0,
-		"dead target has no sensor emission signal")
+	for lamp in main.world.cad_emission.lights:
+		check(lamp.albedo_color == Color.BLACK, "dead target has no sensor emission signal")
 	main.model.health = camera_health
 	main.fields["camera.brightness_gain"].value = original_gain
 	main.world.update_world()
 	main.model.paused = was_paused
 	await check_hit_flash(main, stream, transport)
+	await check_custom_model(main)
 	var ipc_directory: String = transport.ipc.directory
 	stream.close()
 	transport.close()
@@ -442,11 +505,14 @@ func _run() -> void:
 		check_rendered_extent(main, 0.55)
 		for plate in main.world.plates:
 			var sticker = plate.get_node_or_null("ArmorSticker")
-			check(sticker is Sprite3D and sticker.texture is AtlasTexture, "each armor uses an image sticker")
+			check(sticker is Sprite3D and sticker.texture is ImageTexture, "each CAD armor uses an image sticker")
 			if sticker != null:
-				var source: Image = sticker.texture.atlas.get_image()
-				var background = source.get_pixelv(Vector2i(preset.sticker_region.position))
-				check(plate.get_child(0).material_override.albedo_color.is_equal_approx(background), "panel black matches source sticker")
+				var image: Image = sticker.texture.get_image()
+				check(image.get_pixel(0, 0).a < 0.01, "sticker black background does not cover CAD relief")
+				check(region_peak(image, Vector2(image.get_size()) * 0.5, image.get_size() / 2) > 0.9,
+					"printed white pattern remains present")
+			check(plate.get_node_or_null("OfficialCADArmor") != null, "all vehicle presets use official CAD")
+
 	main.robot_select.select(0)
 	main.robot_select.item_selected.emit(0)
 	var spacing_session: String = main.model.session_id
@@ -546,7 +612,7 @@ func _run() -> void:
 	await wait_sim(main, 0.5)
 	check(main.model.health == 0 and main.model.stats.kills == 1, "real GUI fire deducts health and kills")
 	check(not main.world.plate_materials[0].emission_enabled, "death switches off armor emission")
-	check(not main.world.lamp_glows[0].visible, "death also switches off optical glare")
+	check(main.world.cad_emission.lights[0].albedo_color == Color.BLACK, "death also switches off optical glare")
 	check(main.model.camera_observation().armors.is_empty(), "dead target has no ideal lightbar observations")
 	main.fields["target.max_health"].value = 40
 	check(main.model.health == 40 and main.world.plate_materials[0].emission_enabled, "live health edit restores lights")

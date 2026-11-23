@@ -1,5 +1,7 @@
 extends RefCounted
 
+const CAD = preload("res://scripts/cad_armor.gd")
+
 const DEFAULT_EXTENT = 0.550
 const MAX_EXTENT = 0.600
 const DEFAULT_LOWER_EDGE = 0.200
@@ -53,16 +55,7 @@ static func lower_edge(target: Dictionary) -> float:
 
 
 static func module_boxes(target: Dictionary) -> Array[Dictionary]:
-	var width: float = target.module_width - 0.005
-	var height: float = target.module_height
-	var parts: Array[Dictionary] = [
-		{"size": Vector3(width, height, 0.018), "position": Vector3(0, 0, -0.012), "light": false},
-		{"size": Vector3(width - 0.004, height - 0.004, 0.004), "position": Vector3(0, 0, 0.001), "light": false},
-	]
-	for side in [-1, 1]:
-		parts.append({"size": Vector3(0.005, target.lightbar_length, 0.008),
-			"position": Vector3(side * target.lightbar_spacing * 0.5, 0, 0.007), "light": true})
-	return parts
+	return CAD.bounds_boxes(target)
 
 
 static func _outline(target: Dictionary) -> Array[Vector3]:

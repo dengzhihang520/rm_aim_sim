@@ -1,11 +1,15 @@
 extends Node3D
 
+const CAD = preload("res://scripts/cad_armor.gd")
+const CADEmission = preload("res://scripts/cad_emission.gd")
 const Assets = preload("res://scripts/visual_assets.gd")
 const Presets = preload("res://scripts/presets.gd")
 const PROJECTILE_DIAMETER = 0.0168
 const PROJECTILE_COLOR = Color("39ff14")
 const RICOCHET_LIFETIME = 0.8
 
+var cad_emission: RefCounted
+var using_cad_armor = false
 var model: RefCounted
 var rune_view: Node3D
 var outpost_view: Node3D
@@ -75,23 +79,6 @@ func build(simulation: RefCounted) -> void:
 	sensor_camera.far = 80.0
 	raw_sensor_viewport.add_child(sensor_camera)
 	sensor_camera.current = true
-	# Render 3D once; keep the raw main view separate from the exposure-processed output.
-	sensor_viewport = SubViewport.new()
-	sensor_viewport.size = raw_sensor_viewport.size
-	sensor_viewport.disable_3d = true
-	sensor_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(sensor_viewport)
-	var brightness_layer = CanvasLayer.new()
-	sensor_viewport.add_child(brightness_layer)
-	var brightness_rect = ColorRect.new()
-	brightness_layer.add_child(brightness_rect)
-	brightness_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	brightness_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	brightness_material = ShaderMaterial.new()
-	brightness_material.shader = preload("res://shaders/camera_brightness.gdshader")
-	brightness_material.set_shader_parameter("camera_texture", raw_sensor_viewport.get_texture())
-	brightness_material.set_shader_parameter("brightness_gain", model.settings.camera.brightness_gain)
-	brightness_rect.material = brightness_material
 	gun = Node3D.new()
 	add_child(gun)
 	var metal = material(Color("71838d"), 0.75)
@@ -109,11 +96,33 @@ func build(simulation: RefCounted) -> void:
 	traces.mesh = trace_mesh
 	traces.material_override = _projectile_material()
 	add_child(traces)
+	# Create input viewports before their camera-processing consumer, including in Compatibility rendering.
+	cad_emission = CADEmission.new()
+	cad_emission.setup(self)
+	# Keep the raw main view separate from the exposure-processed output.
+	sensor_viewport = SubViewport.new()
+	sensor_viewport.size = raw_sensor_viewport.size
+	sensor_viewport.disable_3d = true
+	sensor_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(sensor_viewport)
+	var brightness_layer = CanvasLayer.new()
+	sensor_viewport.add_child(brightness_layer)
+	var brightness_rect = ColorRect.new()
+	brightness_layer.add_child(brightness_rect)
+	brightness_rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	brightness_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	brightness_material = ShaderMaterial.new()
+	brightness_material.shader = preload("res://shaders/camera_brightness.gdshader")
+	brightness_material.set_shader_parameter("camera_texture", raw_sensor_viewport.get_texture())
+	brightness_material.set_shader_parameter("brightness_gain", model.settings.camera.brightness_gain)
+	brightness_rect.material = brightness_material
+
 	rebuild_target()
 	update_world()
 
 
 func rebuild_target() -> void:
+	using_cad_armor = false
 	if outpost_view != null:
 		outpost_view.free()
 		outpost_view = null
@@ -157,7 +166,20 @@ func rebuild_target() -> void:
 				Assets.tint_named_surfaces(custom, lamp_material)
 			else:
 				_build_armor(plate, lamp_material)
-			_add_lamp_glow(plate)
+				using_cad_armor = true
+			if model.is_outpost() or custom != null:
+				_add_lamp_glow(plate)
+	if using_cad_armor:
+		cad_emission.viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		cad_emission.rebuild(plates)
+		brightness_material.shader = preload("res://shaders/cad_camera.gdshader")
+		brightness_material.set_shader_parameter("camera_texture",raw_sensor_viewport.get_texture())
+		brightness_material.set_shader_parameter("emission_texture",cad_emission.viewport.get_texture())
+	else:
+		if cad_emission != null:
+			cad_emission.viewport.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		brightness_material.shader = preload("res://shaders/camera_brightness.gdshader")
+		brightness_material.set_shader_parameter("camera_texture",raw_sensor_viewport.get_texture())
 	sensor_viewport.size = Vector2i(model.settings.camera.width, model.settings.camera.height)
 	raw_sensor_viewport.size = sensor_viewport.size
 	sensor_camera.fov = model.settings.camera.vertical_fov
@@ -165,70 +187,7 @@ func rebuild_target() -> void:
 
 
 func _build_armor(plate: Node3D, lamp_material: StandardMaterial3D) -> void:
-	var height: float = model.settings.target.module_height
-	var preset: Dictionary = Presets.ROBOTS[model.settings.appearance.robot]
-	# Runtime loading keeps the sticker replaceable without an editor import cache.
-	var image = Image.load_from_file(preset.sticker)
-	var background = Color.BLACK
-	if image != null:
-		# The crop's corner is black; sample it so the panel and texture have the same unlit color.
-		background = image.get_pixelv(Vector2i(preset.sticker_region.position))
-	var face_material = material(background)
-	face_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	for part in Presets.module_boxes(model.settings.target):
-		if part.light:
-			box(plate, part.size, part.position, lamp_material)
-		else:
-			_armor_shell(plate, part.size, part.position, face_material)
-	if image != null:
-		var texture = AtlasTexture.new()
-		texture.atlas = ImageTexture.create_from_image(image)
-		texture.region = preset.sticker_region
-		var sticker = Sprite3D.new()
-		sticker.name = "ArmorSticker"
-		sticker.texture = texture
-		sticker.pixel_size = minf(model.settings.target.lightbar_spacing * 0.72 / texture.get_width(),
-			height * 0.8 / texture.get_height())
-		sticker.position.z = 0.006
-		sticker.double_sided = false
-		plate.add_child(sticker)
-		return
-	push_warning("Missing armor sticker for " + model.settings.appearance.robot)
-
-
-func _armor_shell(parent: Node3D, size: Vector3, origin: Vector3, mat: Material) -> void:
-	var x = size.x * 0.5
-	var y = size.y * 0.5
-	var bevel = minf(size.x, size.y) * 0.035
-	var notch = minf(size.x * 0.045, 0.006)
-	var shoulder = model.settings.target.lightbar_length * 0.65
-	var outline = PackedVector2Array([Vector2(-x + bevel, y), Vector2(x - bevel, y),
-		Vector2(x, y - bevel), Vector2(x, shoulder + notch), Vector2(x - notch, shoulder),
-		Vector2(x - notch, -shoulder), Vector2(x, -shoulder - notch), Vector2(x, -y + bevel),
-		Vector2(x - bevel, -y), Vector2(-x + bevel, -y), Vector2(-x, -y + bevel),
-		Vector2(-x, -shoulder - notch), Vector2(-x + notch, -shoulder),
-		Vector2(-x + notch, shoulder), Vector2(-x, shoulder + notch), Vector2(-x, y - bevel)])
-	var surface = SurfaceTool.new()
-	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var triangles = Geometry2D.triangulate_polygon(outline)
-	for face in [-1.0, 1.0]:
-		for index in range(0, triangles.size(), 3):
-			for corner in ([0, 1, 2] if face > 0 else [2, 1, 0]):
-				var point = outline[triangles[index + corner]]
-				surface.add_vertex(Vector3(point.x, point.y, size.z * 0.5 * face))
-	for index in range(outline.size()):
-		var a = outline[index]
-		var b = outline[(index + 1) % outline.size()]
-		for point in [Vector3(a.x, a.y, -size.z * 0.5), Vector3(b.x, b.y, -size.z * 0.5),
-				Vector3(b.x, b.y, size.z * 0.5), Vector3(a.x, a.y, -size.z * 0.5),
-				Vector3(b.x, b.y, size.z * 0.5), Vector3(a.x, a.y, size.z * 0.5)]:
-			surface.add_vertex(point)
-	surface.generate_normals()
-	var node = MeshInstance3D.new()
-	node.mesh = surface.commit()
-	node.material_override = mat
-	node.position = origin
-	parent.add_child(node)
+	CAD.build(plate,model.settings.target,lamp_material,Presets.ROBOTS[model.settings.appearance.robot])
 
 
 func _add_lamp_glow(plate: Node3D) -> void:
@@ -303,6 +262,12 @@ func update_world() -> void:
 
 
 func _update_camera_exposure() -> void:
+	if using_cad_armor:
+		cad_emission.update(self)
+		brightness_material.set_shader_parameter("brightness_gain",model.settings.camera.brightness_gain)
+		brightness_material.set_shader_parameter("lamp_color",Presets.team_color(model.settings.appearance.team))
+		brightness_material.set_shader_parameter("core_color",Color("fff0dc") if model.settings.appearance.team == "red" else Color("dcfaff"))
+		return
 	var segments = PackedVector4Array()
 	var widths = PackedFloat32Array()
 	segments.resize(8)
