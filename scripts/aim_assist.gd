@@ -3,11 +3,11 @@ extends RefCounted
 
 # A local ground-truth helper for exercising the simulator before an external aimer is connected.
 static func solve(model: RefCounted, predict: bool = true) -> Dictionary:
-	if model.health <= 0:
+	if not model.is_rune() and model.health <= 0:
 		return {}
 	var best: Dictionary = {}
 	var closest = INF
-	for index in range(4):
+	for index in (model.rune.targets if model.is_rune() else range(4)):
 		var candidate = _candidate(model, index, model.time, predict)
 		if not candidate.is_empty() and candidate.distance < closest:
 			closest = candidate.distance
@@ -29,12 +29,12 @@ static func solve(model: RefCounted, predict: bool = true) -> Dictionary:
 
 static func _candidate(model: RefCounted, index: int, at: float, predict: bool) -> Dictionary:
 	var origin: Vector3 = model.settings.gimbal.origin
-	var armor: Dictionary = model.armor_pose(index, at)
+	var armor: Dictionary = model.rune_pose(index, at) if model.is_rune() else model.armor_pose(index, at)
 	var flight = armor.center.distance_to(origin) / model.settings.weapon.speed
 	var result: Dictionary = {}
 	for _iteration in range(12):
 		# Commands keep updating during the launch delay; predict flight from the current muzzle pose.
-		armor = model.armor_pose(index, at + (flight if predict else 0.0))
+		armor = model.rune_pose(index, at + (flight if predict else 0.0)) if model.is_rune() else model.armor_pose(index, at + (flight if predict else 0.0))
 		result = _ballistic(model.settings, armor.center - origin)
 		if result.is_empty():
 			return {}

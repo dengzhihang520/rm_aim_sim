@@ -8,13 +8,13 @@
 
 ```ini
 [appearance]
-robot="hero"
+robot="hero_2026"
 team="red"
 armor_model="/absolute/path/to/armor.glb"
 armor_scale=1.0
 ```
 
-`robot` 支持 infantry_3/infantry_4/infantry_5/hero/sentry。未明确写入的模块尺寸、受击宽高、半径和灯条间距继承该车型预设；明确配置的尺寸保持原值。界面切换兵种会更新预设尺寸和血量，并保留本轮统计。
+车辆 `robot` 支持 `infantry_3_2026/infantry_4_2026/infantry_5_2026/hero_2026/sentry_2026`。未明确写入的模块尺寸、受击宽高、半径和灯条间距继承该车型预设；明确配置的尺寸保持原值。界面切换兵种会更新预设尺寸和血量，并保留本轮统计。
 
 - **装甲局部轴**：x 为正面视角的右方，y 向上，+z 是外法向。自动居中，按网格 x 宽归一化至 `target.module_width`，再乘 armor_scale。没有独立的模型安装偏移调节。
 - 节点名包含 `Team` 或 `Lightbar`（忽略大小写）时，会被替换为当前阵营材质，并在血量归零后灭灯。其他表面保留模型材质。自定义装甲自行提供图案，内置装甲使用下列现成 PNG。
@@ -51,3 +51,9 @@ PNG 保留完整原图，渲染时使用 AtlasTexture 取中央图案，避开�
 - [robomaster-oss/rmoss_gz_resources](https://github.com/robomaster-oss/rmoss_gz_resources)：包含大小装甲模块与编号贴纸。上游明确区分 SDF 代码与三维模型版权，不能把其 Apache-2.0 代码许可证直接视为所有模型的授权。
 
 首版内置装甲采用本仓库生成的参数化几何，尚未复制上述两个仓库的装甲网格或贴纸。后续可以选择适合的机械版本，转换为 GLB 后直接替换。
+
+## 能量机关
+
+2025/2027 大小符预设与车辆同在目标选择框，名称带年份；符使用共享的 `scripts/rune_view.gd` 参数化几何与 `assets/rune/center_r.svg`，规则分别从年份元数据选择，不复制整套模型。符不加载自定义装甲 GLB。尺寸、灯效、安装和精度边界见 [能量机关说明](power_rune.md)。
+
+现有 PNG/GLB 原始文件名和来源哈希保持原样，年份由引用它们的预设明确标注；后续不同年份的新装甲使用其对应资源，不覆盖 2026 贴图。

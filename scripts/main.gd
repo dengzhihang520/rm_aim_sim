@@ -8,6 +8,9 @@ const Reticle = preload("res://scripts/reticle.gd")
 const Presets = preload("res://scripts/presets.gd")
 const AimAssist = preload("res://scripts/aim_assist.gd")
 const CameraStream = preload("res://scripts/camera_stream.gd")
+# Millimeter geometry cannot be rounded to centimeters; ordinary controls use two decimals.
+const GEOMETRY_FIELDS = ["target.module_width", "target.module_height", "target.armor_width",
+	"target.armor_height", "target.lightbar_spacing", "target.radius", "target.center.z", "target.height_difference"]
 const CAMERA_RESOLUTIONS = [Vector2i(640, 480), Vector2i(960, 600), Vector2i(1280, 720),
 	Vector2i(1280, 1024), Vector2i(1440, 1080), Vector2i(1920, 1080)]
 
@@ -17,6 +20,11 @@ var camera_stream: RefCounted
 var world: Node3D
 var fields: Dictionary = {}
 var slider_labels: Dictionary = {}
+var armor_controls: VBoxContainer
+var rune_controls: VBoxContainer
+var armor_model_controls: VBoxContainer
+var rune_start: Button
+var armor_profiles: Dictionary = {}
 var robot_select: OptionButton
 var team_select: OptionButton
 var camera_resolution: OptionButton
@@ -263,7 +271,7 @@ func _build_ui() -> void:
 	column.add_child(title)
 	column.add_child(_label("RoboMaster · 自瞄仿真", 14, Color("91acbb")))
 	pause_button = _add_button(column, "P  暂停", _toggle_pause)
-	_section(column, "01  靶车与阵营")
+	_section(column, "01  目标与阵营")
 	robot_select = OptionButton.new()
 	for robot in Presets.ROBOTS:
 		robot_select.add_item(Presets.ROBOTS[robot].label)
@@ -271,27 +279,37 @@ func _build_ui() -> void:
 	robot_select.item_selected.connect(_robot_selected)
 	column.add_child(robot_select)
 	team_select = OptionButton.new()
-	team_select.add_item("蓝方装甲")
-	team_select.add_item("红方装甲")
+	team_select.add_item("蓝方目标")
+	team_select.add_item("红方目标")
 	column.add_child(team_select)
-	_add_number(column, "target.max_health", "设置血量 / HP", 0, 10000, 1)
-	_add_number(column, "target.center.x", "初始距离 / m", 1, 20, 0.1)
-	_add_slider(column, "target.center.z", "基准装甲下沿", 0.001, 0.4)
-	_add_slider(column, "target.radius", "装甲伸展", 0.05, Presets.MAX_EXTENT)
-	_add_slider(column, "target.height_difference", "两组装甲高度差", -0.1, 0.1)
-	column.add_child(_label("下沿离地 1–400 mm · 高度差 ≤100 mm", 12, Color("91acbb")))
-	_add_toggle(column, "target.translate", "开启平移")
-	_add_number(column, "target.speed", "平移速度 / m·s⁻¹", 0, 10, 0.1)
-	_add_number(column, "target.acceleration", "平移加速度 / m·s⁻²", 0.1, 50, 0.1)
-	_add_number(column, "target.heading", "平移方向 / °", -180, 180, 1)
-	_add_number(column, "target.travel", "往返半程 / m", 0.1, 10, 0.1)
-	_add_toggle(column, "target.rotate", "开启自转")
-	_add_number(column, "target.omega", "旋转速度 / rad·s⁻¹", -25, 25, 0.1)
-	_add_number(column, "target.module_width", "模块外宽 / m", 0.05, 0.3, 0.001)
-	_add_number(column, "target.module_height", "模块外高 / m", 0.04, 0.3, 0.001)
-	_add_number(column, "target.armor_width", "命中区宽（近似）/ m", 0.05, 0.3, 0.005)
-	_add_number(column, "target.armor_height", "命中区高（近似）/ m", 0.04, 0.3, 0.001)
-	_add_number(column, "target.lightbar_spacing", "灯条间距 / m", 0.05, 0.3, 0.005)
+	armor_controls = VBoxContainer.new()
+	column.add_child(armor_controls)
+	_add_number(armor_controls, "target.max_health", "设置血量 / HP（-1 用预设）", -1, 10000, 1)
+	_add_number(armor_controls, "target.center.x", "初始前后位置 / m", -25, 25, 0.1)
+	_add_slider(armor_controls, "target.center.z", "基准装甲下沿 / m", 0, 0.4)
+	_add_slider(armor_controls, "target.radius", "装甲伸展 / m", 0, Presets.MAX_EXTENT)
+	_add_slider(armor_controls, "target.height_difference", "两组装甲高度差 / m", -0.1, 0.1)
+	armor_controls.add_child(_label("下沿离地 >0 且 ≤400 mm · 高度差 ≤100 mm", 12, Color("91acbb")))
+	_add_toggle(armor_controls, "target.translate", "开启平移")
+	_add_number(armor_controls, "target.speed", "平移速度 / m·s⁻¹", 0, 10, 0.1)
+	_add_number(armor_controls, "target.acceleration", "平移加速度 / m·s⁻²", 0.1, 50, 0.1)
+	_add_number(armor_controls, "target.heading", "平移方向 / °", -3600, 3600, 1)
+	_add_number(armor_controls, "target.travel", "往返半程 / m", 0.1, 10, 0.1)
+	_add_toggle(armor_controls, "target.rotate", "开启自转")
+	_add_number(armor_controls, "target.omega", "旋转速度 / rad·s⁻¹", -25, 25, 0.1)
+	_add_number(armor_controls, "target.module_width", "模块外宽 / m", 0.05, 0.3, 0.001)
+	_add_number(armor_controls, "target.module_height", "模块外高 / m", 0.04, 0.3, 0.001)
+	_add_number(armor_controls, "target.armor_width", "命中区宽（近似）/ m", 0.05, 0.3, 0.005)
+	_add_number(armor_controls, "target.armor_height", "命中区高（近似）/ m", 0.04, 0.3, 0.001)
+	_add_number(armor_controls, "target.lightbar_spacing", "灯条间距 / m", 0.05, 0.3, 0.005)
+	rune_controls = VBoxContainer.new()
+	column.add_child(rune_controls)
+	_add_number(rune_controls, "rune.forward", "符距初始相机前后 / m", 1, 20, 0.1)
+	_add_number(rune_controls, "rune.lateral", "符左右偏移（左正）/ m", -15, 15, 0.1)
+	_add_number(rune_controls, "rune.heading", "符面朝向角 / °", -180, 180, 1)
+	_add_number(rune_controls, "rune.height", "符心离地高度 / m", 0.9, 5, 0.05)
+	rune_controls.add_child(_label("符位置固定；朝向 0° 正对相机。\n扇叶按所选年份规则转动，不使用靶车运动参数。", 12, Color("91acbb"), true))
+	rune_start = _add_button(rune_controls, "开始打符 / 重新开始", _start_rune)
 	_section(column, "02  发射与响应")
 	_add_number(column, "weapon.speed", "弹速 / m·s⁻¹", 1, 100, 0.5)
 	_add_number(column, "weapon.damage", "单发伤害 / HP", 0, 10000, 1)
@@ -310,19 +328,20 @@ func _build_ui() -> void:
 	_add_number(column, "camera.height", "图像高 / px", 120, 2160, 1)
 	_add_number(column, "camera.vertical_fov", "垂直视场角 / °", 10, 120, 1)
 	_add_slider(column, "camera.brightness_gain", "相机曝光增益 / ×", 0, 4)
-	fields["camera.brightness_gain"].step = 0.01
 	fields["camera.brightness_gain"].value_changed.connect(func(value: float):
 		slider_labels["camera.brightness_gain"].text = "相机曝光增益 %.2f× · 低于 1 减少曝光" % value)
 	column.add_child(_label("分辨率与内参同步更新，保留本轮统计。", 12, Color("91acbb"), true))
-	_section(column, "04  可替换模型")
+	armor_model_controls = VBoxContainer.new()
+	column.add_child(armor_model_controls)
+	_section(armor_model_controls, "04  可替换模型")
 	armor_label = _label("装甲：内置灯条与贴图", 13, Color("91acbb"))
-	column.add_child(armor_label)
-	_add_button(column, "选择装甲 GLB / glTF", _choose_model)
-	_add_button(column, "恢复内置外观", func():
+	armor_model_controls.add_child(armor_label)
+	_add_button(armor_model_controls, "选择装甲 GLB / glTF", _choose_model)
+	_add_button(armor_model_controls, "恢复内置外观", func():
 		selected_armor = ""
 		_update_model_labels()
 		_apply_fields())
-	column.add_child(_label("参数修改立即生效；修改血量会设置当前血量。", 12, Color("91acbb"), true))
+	armor_model_controls.add_child(_label("参数修改立即生效；修改血量会设置当前血量。", 12, Color("91acbb"), true))
 	var manual_panel = PanelContainer.new()
 	manual_panel.position = Vector2(356, 156)
 	manual_panel.custom_minimum_size = Vector2(290, 0)
@@ -424,13 +443,19 @@ func _build_ui() -> void:
 
 func _load_fields() -> void:
 	_updating_fields = true
+	# Remove the previous profile's coupled limits before loading the next profile.
+	fields["target.center.z"].min_value = 0.0
+	fields["target.center.z"].max_value = 0.4
+	fields["target.height_difference"].min_value = -0.1
+	fields["target.height_difference"].max_value = 0.1
+	fields["target.radius"].min_value = 0.0
 	for path in fields:
 		var value = _setting_get(model.settings, path)
 		var input: Control = fields[path]
 		if input is CheckButton:
 			input.button_pressed = value
 		else:
-			if path == "target.heading":
+			if path in ["target.heading", "rune.heading"]:
 				value = rad_to_deg(value)
 			elif path == "weapon.delay":
 				value *= 1000.0
@@ -441,6 +466,8 @@ func _load_fields() -> void:
 			elif path == "target.center.z":
 				value = Presets.lower_edge(model.settings.target)
 			input.value = value
+			var number: SpinBox = input if input is SpinBox else input.get_parent().get_child(1)
+			number.get_line_edit().caret_column = 0
 	for i in range(robot_select.item_count):
 		if robot_select.get_item_metadata(i) == model.settings.appearance.robot:
 			robot_select.select(i)
@@ -451,6 +478,9 @@ func _load_fields() -> void:
 	_update_height_limits()
 	_update_spacing_limits(model.settings.target)
 	_updating_fields = false
+	_sync_target_controls()
+	yaw_input.value = rad_to_deg(model.yaw)
+	pitch_input.value = rad_to_deg(model.pitch)
 
 
 func _connect_live_controls() -> void:
@@ -494,26 +524,34 @@ func _sync_camera_resolution() -> void:
 func _apply_fields(changed_path: String = "") -> void:
 	if _updating_fields:
 		return
-	_update_height_limits()
+	var height_changed = changed_path in ["target.center.z", "target.height_difference", "target.module_height"]
+	var geometry_changed = height_changed or changed_path in ["target.radius", "target.module_width", "target.lightbar_spacing"]
+	if height_changed and not model.is_rune():
+		_update_height_limits()
 	var s = model.settings.duplicate(true)
 	for path in fields:
-		if path == "target.radius":
+		if path == "target.radius" or (model.is_rune() and path.begins_with("target.")) \
+				or (not model.is_rune() and path.begins_with("rune.")):
 			continue
-		if path == "target.max_health" and changed_path not in ["target.max_health", "robot"]:
+		# Editing a control must not round-trip untouched settings through UI conversions.
+		if path != changed_path and not (changed_path == "camera" and path in ["camera.width", "camera.height"]):
 			continue
 		var input: Control = fields[path]
 		var value = input.button_pressed if input is CheckButton else input.value
-		if path == "target.heading":
+		if path in ["target.heading", "rune.heading"]:
 			value = deg_to_rad(value)
 		elif path == "weapon.delay":
 			value /= 1000.0
 		_setting_set(s, path, value)
-	s.target.center.z = fields["target.center.z"].value + Presets.vertical_half_height(s.target)
-	var spacing_error = _update_spacing_limits(s.target)
-	if not spacing_error.is_empty():
-		message_label.text = spacing_error
-		return
-	s.target.radius = Presets.radius_for_extent(fields["target.radius"].value, s.target)
+	if height_changed and not model.is_rune():
+		s.target.center.z = fields["target.center.z"].value + Presets.vertical_half_height(s.target)
+		s.target.height_difference = fields["target.height_difference"].value
+	if geometry_changed and not model.is_rune():
+		var spacing_error = _update_spacing_limits(s.target)
+		if not spacing_error.is_empty():
+			message_label.text = spacing_error
+			return
+		s.target.radius = Presets.radius_for_extent(fields["target.radius"].value, s.target)
 	s.appearance.robot = robot_select.get_selected_metadata()
 	s.appearance.team = "blue" if team_select.selected == 0 else "red"
 	s.appearance.armor_model = selected_armor
@@ -546,8 +584,8 @@ func _reset_current() -> void:
 	if has_graphics:
 		world.rebuild_target()
 		pause_button.text = "P  暂停"
-		yaw_input.value = 0
-		pitch_input.value = 0
+		yaw_input.value = rad_to_deg(model.yaw)
+		pitch_input.value = rad_to_deg(model.pitch)
 
 
 func _toggle_pause() -> void:
@@ -570,17 +608,41 @@ func _sync_view() -> void:
 
 
 func _robot_selected(index: int) -> void:
-	_updating_fields = true
-	var preset: Dictionary = Presets.ROBOTS[robot_select.get_item_metadata(index)]
-	fields["target.radius"].value = Presets.DEFAULT_EXTENT
-	fields["target.armor_width"].value = preset.width
-	fields["target.armor_height"].value = preset.height
-	fields["target.module_width"].value = preset.module_width
-	fields["target.module_height"].value = preset.module_height
-	fields["target.max_health"].value = preset.max_health
-	fields["target.lightbar_spacing"].value = preset.width
-	_updating_fields = false
-	_apply_fields("robot")
+	var previous: String = model.settings.appearance.robot
+	if not Presets.is_rune(previous):
+		armor_profiles[previous] = model.settings.target.duplicate(true)
+	var name: String = robot_select.get_item_metadata(index)
+	var s = model.settings.duplicate(true)
+	if not Presets.is_rune(name) and armor_profiles.has(name):
+		s.target = armor_profiles[name].duplicate(true)
+		s.appearance.robot = name
+	else:
+		Presets.apply_robot(s, name)
+	var error = Settings.validate(s)
+	if not error.is_empty():
+		message_label.text = error
+		return
+	model.apply_settings(s, not Presets.is_rune(name))
+	if Presets.is_rune(previous) or Presets.is_rune(name):
+		bridge.reset_session()
+	world.rebuild_target()
+	_load_fields()
+	_update_status()
+
+
+func _sync_target_controls() -> void:
+	var enabled: bool = model.is_rune()
+	armor_controls.visible = not enabled
+	armor_model_controls.visible = not enabled
+	rune_controls.visible = enabled
+	# Damage is an armor-only setting; ballistics and launch response remain shared.
+	fields["weapon.damage"].get_parent().visible = not enabled
+
+
+func _start_rune() -> void:
+	if model.is_rune() and not model.paused:
+		message_label.text = "激活开始" if model.rune.start(model.time) else "当前无法开始"
+		_update_status()
 
 
 func _update_status() -> void:
@@ -597,11 +659,19 @@ func _update_status() -> void:
 	health_label.text = "  靶车血量 %d / %d HP  ·  %s  ·  累计伤害 %d  ·  击毁 %d" % [
 		model.health, model.max_health, "存活" if model.health > 0 else "已击毁 / 灯条熄灭", s.damage, s.kills]
 	health_label.add_theme_color_override("font_color", Color("5be2d4") if model.health > 0 else Color("ff6a72"))
+	if model.is_rune():
+		var rune_state = model.rune.snapshot()
+		health_label.text = "  %s（%d） · %s · 组 %d/5 · 击中 %d · %s" % [
+			"大符" if model.rune.big else "小符", model.rune.year, rune_state.state,
+			rune_state.groups, rune_state.hits, rune_state.outcome]
+		health_label.add_theme_color_override("font_color", Color("5be2d4"))
+		rune_start.disabled = model.paused
+
 	event_label.text = "  落地 %d  ·  离靶/超时 %d  ·  命中/秒 %.2f\n  实际 Yaw %.2f°  /  Pitch %.2f°    本机指令 %d / 拒绝 %d" % [
 		s.ground, s.expired, s.hits_per_second, rad_to_deg(model.yaw),
 		rad_to_deg(model.pitch), bridge.received, bridge.rejected]
 	if tracking_held:
-		message_label.text = "F 连续跟踪 · 装甲 %d · Space 发射" % tracking_armor if tracking_armor >= 0 else "F 连续跟踪 · 暂无可瞄准的存活装甲"
+		message_label.text = "F 连续跟踪 · 目标 %d · Space 发射" % tracking_armor if tracking_armor >= 0 else "F 连续跟踪 · 暂无有效点亮目标"
 
 
 func _choose_model() -> void:
@@ -691,7 +761,8 @@ func _add_number(parent: VBoxContainer, path: String, text: String, minimum: flo
 	var input = SpinBox.new()
 	input.min_value = minimum
 	input.max_value = maximum
-	input.step = step
+	input.step = 1.0 if path in Settings.INTEGER_FIELDS else (0.001 if path in GEOMETRY_FIELDS else 0.01)
+	input.custom_arrow_step = step
 	input.update_on_text_changed = true
 	input.custom_minimum_size.x = 106
 	row.add_child(input)
@@ -704,9 +775,18 @@ func _add_slider(parent: VBoxContainer, path: String, text: String, minimum: flo
 	var slider = HSlider.new()
 	slider.min_value = minimum
 	slider.max_value = maximum
-	slider.step = 0.001
-	slider.custom_minimum_size = Vector2(0, 24)
-	parent.add_child(slider)
+	slider.step = 0.001 if path in GEOMETRY_FIELDS else 0.01
+	slider.custom_minimum_size = Vector2(80, 24)
+	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var row = HBoxContainer.new()
+	parent.add_child(row)
+	row.add_child(slider)
+	var input = SpinBox.new()
+	input.custom_arrow_step = slider.step
+	input.update_on_text_changed = true
+	input.custom_minimum_size.x = 130
+	row.add_child(input)
+	slider.share(input)
 	fields[path] = slider
 	slider_labels[path] = label
 
@@ -717,10 +797,10 @@ func _update_height_limits() -> void:
 	var height: HSlider = fields["target.center.z"]
 	var difference: HSlider = fields["target.height_difference"]
 	# The UI edits lower-edge height directly; the model stores the tilted module's center.
-	height.min_value = 0.001 + maxf(0.0, -difference.value)
+	height.min_value = maxf(0.0, -difference.value)
 	height.max_value = 0.4 - maxf(0.0, difference.value)
 	var lower = height.value
-	difference.min_value = maxf(-0.1, 0.001 - lower)
+	difference.min_value = maxf(-0.1, -lower)
 	difference.max_value = minf(0.1, 0.4 - lower)
 	slider_labels["target.center.z"].text = "基准装甲下沿 %.0f mm" % (lower * 1000.0)
 	slider_labels["target.height_difference"].text = "两组装甲高度差 %+.0f mm" % (difference.value * 1000.0)
@@ -746,6 +826,7 @@ func _update_spacing_limits(target: Dictionary) -> String:
 func _manual_angle(parent: VBoxContainer, text: String, minimum: float, maximum: float) -> SpinBox:
 	_add_number(parent, text, text, minimum, maximum, 0.1)
 	var result: SpinBox = fields[text]
+	result.step = 0.01
 	fields.erase(text)
 	return result
 

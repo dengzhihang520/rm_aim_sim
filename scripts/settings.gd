@@ -1,10 +1,11 @@
 extends RefCounted
 
 const Presets = preload("res://scripts/presets.gd")
+const INTEGER_FIELDS = ["camera.width", "camera.height", "target.max_health", "weapon.damage"]
 
 static func defaults() -> Dictionary:
 	var result = {
-		"appearance": {"robot": "infantry_3", "team": "blue", "body_model": "",
+		"appearance": {"robot": "infantry_3_2026", "team": "blue", "body_model": "",
 			"armor_model": "", "body_scale": 1.0, "armor_scale": 1.0},
 		"target": {"center": Vector3(4, 0, 0), "translate": false, "speed": 1.0,
 			"acceleration": 3.0,
@@ -13,6 +14,7 @@ static func defaults() -> Dictionary:
 			"armor_width": 0.135, "armor_height": 0.125, "armor_tilt": PI / 12.0,
 			"lightbar_spacing": 0.135, "lightbar_length": 0.056,
 			"module_width": 0.140, "module_height": 0.125, "max_health": -1},
+		"rune": {"forward": 4.0, "lateral": 0.0, "height": 2.6, "heading": 0.0},
 		"gimbal": {"origin": Vector3(0, 0, 0.65), "barrel_length": 0.22,
 			"max_speed": 6.0, "max_acceleration": 50.0, "response_hz": 6.0,
 			"pitch_min": -PI / 6.0, "pitch_max": PI / 9.0},
@@ -42,8 +44,10 @@ static func load_file(path: String) -> Dictionary:
 			if not result[section].has(key):
 				return {"ok": false, "error": "Unknown setting: %s.%s" % [section, key]}
 			result[section][key] = config.get_value(section, key)
+	if result.appearance.robot is String:
+		result.appearance.robot = Presets.resolve_name(result.appearance.robot)
 	var robot = result.appearance.robot
-	if robot is String and Presets.ROBOTS.has(robot):
+	if robot is String and Presets.ROBOTS.has(robot) and not Presets.is_rune(robot):
 		var preset: Dictionary = Presets.ROBOTS[robot]
 		var dimensions = {"armor_width": preset.width, "armor_height": preset.height,
 			"module_width": preset.module_width, "module_height": preset.module_height,
@@ -93,6 +97,8 @@ static func validate(s: Dictionary) -> String:
 		return type_error
 	var bounds = {
 		"appearance.body_scale": [0.001, 1000.0], "appearance.armor_scale": [0.001, 1000.0],
+		"rune.forward": [1.0, 20.0], "rune.lateral": [-15.0, 15.0],
+		"rune.height": [0.9, 5.0], "rune.heading": [-PI, PI],
 		"target.speed": [0.0, 10.0], "target.acceleration": [0.1, 50.0],
 		"target.travel": [0.1, 10.0],
 		"target.omega": [-25.0, 25.0], "target.radius": [0.001, 0.3],
@@ -118,8 +124,7 @@ static func validate(s: Dictionary) -> String:
 		var value = float(s[parts[0]][parts[1]])
 		if value < bounds[name][0] or value > bounds[name][1]:
 			return "%s must be in [%s, %s]" % [name, bounds[name][0], bounds[name][1]]
-	for name in ["camera.width", "camera.height",
-			"target.max_health", "weapon.damage"]:
+	for name in INTEGER_FIELDS:
 		var parts = name.split(".")
 		if float(s[parts[0]][parts[1]]) != floor(float(s[parts[0]][parts[1]])):
 			return name + " must be an integer"
@@ -141,7 +146,7 @@ static func validate(s: Dictionary) -> String:
 		return "Target angles are out of range"
 	if s.camera.offset.length() > 0.5:
 		return "Camera offset must be within 0.5 m"
-	if not s.appearance.robot in ["infantry_3", "infantry_4", "infantry_5", "hero", "sentry"]:
+	if not Presets.ROBOTS.has(s.appearance.robot):
 		return "Unknown robot preset"
 	if not s.appearance.team in ["red", "blue"]:
 		return "Team must be red or blue"

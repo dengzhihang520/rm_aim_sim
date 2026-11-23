@@ -1,0 +1,10 @@
+{
+  "center_r.svg": {
+    "source": "https://bbs-web-static.robomaster.com/451e5737ba5d4463909a3013456a4e551792055647969/RoboMaster%202027%20%E6%9C%BA%E7%94%B2%E5%A4%A7%E5%B8%88%E8%B6%85%E7%BA%A7%E5%AF%B9%E6%8A%97%E8%B5%9B%E6%AF%94%E8%B5%9B%E8%A7%84%E5%88%99%E6%89%8B%E5%86%8CV1.0.0%EF%BC%8820261015%EF%BC%89.pdf",
+    "figure": "4-33, printed page55",
+    "copyright": "DJI / RoboMaster",
+    "derivation": "Vector trace of the R mark in the official figure; shared by 2025 and2027 presets.",
+    "license": "Not relicensed under the project MIT license; no additional redistribution permission inferred.",
+    "sha256": "6c058f63794dbd3726c79647a6e20f184eebb6fd89069ec232870bdd0e854185"
+  }
+}

@@ -5,25 +5,32 @@ const MAX_EXTENT = 0.600
 const DEFAULT_LOWER_EDGE = 0.200
 
 const ROBOTS = {
-	"infantry_3": {"label": "步兵 3", "number": "3", "width": 0.135, "height": 0.125,
+	"infantry_3_2026": {"type": "armor", "year": 2026, "label": "步兵 3（2026）", "number": "3", "width": 0.135, "height": 0.125,
 		"module_width": 0.140, "module_height": 0.125, "max_health": 350,
 		"sticker": "res://assets/stickers/infantry_3.png", "sticker_region": Rect2(110, 30, 330, 440)},
-	"infantry_4": {"label": "步兵 4", "number": "4", "width": 0.135, "height": 0.125,
+	"infantry_4_2026": {"type": "armor", "year": 2026, "label": "步兵 4（2026）", "number": "4", "width": 0.135, "height": 0.125,
 		"module_width": 0.140, "module_height": 0.125, "max_health": 350,
 		"sticker": "res://assets/stickers/infantry_4.png", "sticker_region": Rect2(110, 30, 335, 445)},
-	"infantry_5": {"label": "步兵 5", "number": "5", "width": 0.135, "height": 0.125,
+	"infantry_5_2026": {"type": "armor", "year": 2026, "label": "步兵 5（2026）", "number": "5", "width": 0.135, "height": 0.125,
 		"module_width": 0.140, "module_height": 0.125, "max_health": 350,
 		"sticker": "res://assets/stickers/infantry_5.png", "sticker_region": Rect2(110, 30, 330, 445)},
-	"hero": {"label": "英雄 1", "number": "1", "width": 0.23, "height": 0.127,
+	"hero_2026": {"type": "armor", "year": 2026, "label": "英雄 1（2026）", "number": "1", "width": 0.23, "height": 0.127,
 		"module_width": 0.235, "module_height": 0.127, "max_health": 350,
 		"sticker": "res://assets/stickers/hero.png", "sticker_region": Rect2(220, 45, 360, 370)},
-	"sentry": {"label": "哨兵 7", "number": "7", "width": 0.135, "height": 0.125,
+	"sentry_2026": {"type": "armor", "year": 2026, "label": "哨兵 7（2026）", "number": "7", "width": 0.135, "height": 0.125,
 		"module_width": 0.140, "module_height": 0.125, "max_health": 400,
 		"sticker": "res://assets/stickers/sentry.png", "sticker_region": Rect2(110, 85, 400, 375)},
+	"small_rune_2025": {"type": "rune", "year": 2025, "size": "small", "label": "小能量机关（2025）", "number": "", "max_health": 0},
+	"big_rune_2025": {"type": "rune", "year": 2025, "size": "big", "label": "大能量机关（2025）", "number": "", "max_health": 0},
+	"small_rune_2027": {"type": "rune", "year": 2027, "size": "small", "label": "小能量机关（2027）", "number": "", "max_health": 0},
+	"big_rune_2027": {"type": "rune", "year": 2027, "size": "big", "label": "大能量机关（2027）", "number": "", "max_health": 0},
 }
 
 
 static func apply_robot(settings: Dictionary, robot: String) -> void:
+	if is_rune(robot):
+		settings.appearance.robot = robot
+		return
 	var lower = lower_edge(settings.target)
 	settings.appearance.robot = robot
 	settings.target.armor_width = ROBOTS[robot].width
@@ -106,3 +113,15 @@ static func minimum_radius(target: Dictionary) -> float:
 
 static func team_color(team: String) -> Color:
 	return Color("ff1000") if team == "red" else Color("0028ff")
+
+
+static func is_rune(robot: String) -> bool:
+	return ROBOTS.has(robot) and ROBOTS[robot].type == "rune"
+
+
+static func resolve_name(robot: String) -> String:
+	# Unversioned saved configurations predate seasonal presets.
+	const LEGACY = {"infantry_3": "infantry_3_2026", "infantry_4": "infantry_4_2026",
+		"infantry_5": "infantry_5_2026", "hero": "hero_2026", "sentry": "sentry_2026",
+		"small_rune": "small_rune_2027", "big_rune": "big_rune_2027"}
+	return LEGACY.get(robot, robot)

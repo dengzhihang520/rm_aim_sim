@@ -70,6 +70,16 @@ func region_peak(image: Image, center: Vector2, half_size: Vector2i) -> float:
 	return peak
 
 
+func region_increase(lit: Image, dark: Image, center: Vector2, half_size: Vector2i) -> float:
+	var increase = 0.0
+	var point = Vector2i(center)
+	for y in range(maxi(0, point.y - half_size.y), mini(lit.get_height(), point.y + half_size.y + 1)):
+		for x in range(maxi(0, point.x - half_size.x), mini(lit.get_width(), point.x + half_size.x + 1)):
+			var difference = lit.get_pixel(x, y) - dark.get_pixel(x, y)
+			increase = maxf(increase, maxf(difference.r, maxf(difference.g, difference.b)))
+	return increase
+
+
 func capture_flash_frame(main: Node, stream: RefCounted, transport: RefCounted, name: String) -> Dictionary:
 	main.world.update_world()
 	var request_id = "flash_%d_%s" % [OS.get_process_id(), name]
@@ -113,6 +123,7 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 		# Sample the LED's center column; adjacent pixels may contain the ground grid behind it.
 		var lamp_region = Vector2i(0, 4)
 		var digit_center = (top_left + bottom_right) * 0.5
+		var halo_center = lamp_center + (lamp_center - digit_center) * 0.3
 		var sticker: Sprite3D = main.world.plates[armor_id].get_node("ArmorSticker")
 		check(main.world.plate_materials[armor_id].albedo_color == Presets.team_color(team), "flash starts at team color")
 		main.model._spawn(main.model.time, solution.yaw, solution.pitch)
@@ -136,6 +147,9 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 			check(region_peak(dark[view], lamp_center, lamp_region)
 				< region_peak(lit[view], lamp_center, lamp_region) * 0.5,
 				team + " lamp actually darkens in " + view + " pixels")
+			var halo_change = region_increase(lit[view], dark[view], halo_center, Vector2i(1, 2))
+			check(halo_change > 0.03,
+				team + " local halo outside the physical lamp also extinguishes in " + view + " (pixel change %.3f)" % halo_change)
 			check(region_peak(dark[view], digit_center, Vector2i(8, 12)) > 0.4,
 				"printed number remains visible while LEDs are off")
 		check(sticker.visible and is_instance_valid(sticker), "hit does not remove the board or sticker")
@@ -170,6 +184,89 @@ func check_hit_flash(main: Node, stream: RefCounted, transport: RefCounted) -> v
 	main.world.update_world()
 
 
+func check_field_precision(main: Node) -> void:
+	var original: Dictionary = main.model.settings.duplicate(true)
+	var was_paused: bool = main.model.paused
+	main.model.paused = true
+	var precise: Dictionary = original.duplicate(true)
+	precise.camera.vertical_fov = 32.51393907727026
+	precise.camera.brightness_gain = 0.412345678901234
+	precise.weapon.delay = 0.0151234567890123
+	precise.target.heading = 7.12345678901234
+	precise.gimbal.max_acceleration = 0.123456789012345
+	main.model.apply_settings(precise)
+	main._load_fields()
+	check(absf(main.fields["camera.vertical_fov"].value - 32.51) < 1e-12,
+		"FOV display uses two decimal places without changing the loaded calibration")
+	check(absf(main.fields["gimbal.max_acceleration"].value - 0.12) < 1e-12,
+		"GUI supports the configuration's acceleration range below one")
+	check(main.yaw_input.step == 0.01 and main.pitch_input.step == 0.01,
+		"manual gimbal commands display two decimal places")
+	var K: Array = main.model.camera_observation().K.duplicate()
+	var expected: Dictionary = main.model.settings.duplicate(true)
+	var speed: SpinBox = main.fields["weapon.speed"]
+	speed.get_line_edit().text = "23.4567890123456"
+	speed.get_line_edit().text_changed.emit(speed.get_line_edit().text)
+	await process_frame
+	expected.weapon.speed = 23.46
+	check(main.model.settings == expected, "speed entry uses two decimals and preserves all untouched settings")
+	check(main.model.camera_observation().K == K, "unrelated numeric edits preserve calibration exactly")
+	var gain: HSlider = main.fields["camera.brightness_gain"]
+	var gain_input: SpinBox = gain.get_parent().get_child(1)
+	check(is_equal_approx(gain_input.value, 0.41), "slider numeric companion displays two decimal places")
+	gain_input.get_line_edit().text = "0.876543210987654"
+	gain_input.get_line_edit().text_changed.emit(gain_input.get_line_edit().text)
+	await process_frame
+	expected.camera.brightness_gain = 0.88
+	check(main.model.settings == expected and is_equal_approx(gain.value, expected.camera.brightness_gain),
+		"two-decimal slider entry synchronizes the slider and applies only exposure")
+	check(main.model.camera_observation().K == K, "exposure changes leave K unchanged")
+	main.team_select.select(1)
+	main.team_select.item_selected.emit(1)
+	expected.appearance.team = "red"
+	check(main.model.settings == expected, "team edits do not rewrite any numeric controls")
+	for name in ["big_rune_2025", "infantry_3_2026"]:
+		for index in range(main.robot_select.item_count):
+			if main.robot_select.get_item_metadata(index) == name:
+				main.robot_select.select(index)
+				main.robot_select.item_selected.emit(index)
+				break
+		check(main.model.camera_observation().K == K, "armor/rune selection preserves precise calibration")
+	main.camera_resolution.select(0)
+	main.camera_resolution.item_selected.emit(0)
+	var size: Vector2i = main.camera_resolution.get_item_metadata(0)
+	check(main.model.settings.camera.width == size.x and main.model.settings.camera.height == size.y,
+		"resolution selection applies both dimensions together")
+	check(main.model.settings.camera.vertical_fov == precise.camera.vertical_fov,
+		"resolution selection retains the original precise FOV")
+	main.fields["camera.vertical_fov"].get_line_edit().text = "32.1234567890123"
+	main.fields["camera.vertical_fov"].get_line_edit().text_changed.emit("32.1234567890123")
+	await process_frame
+	check(absf(main.model.settings.camera.vertical_fov - 32.12) < 1e-12,
+		"intentional FOV edits round to two decimal places")
+	check(main.model.camera_observation().K != K, "intentional calibration edits still change intrinsics")
+	check(main.fields["camera.width"].step == 1.0 and main.fields["weapon.damage"].step == 1.0,
+		"pixel and damage fields retain integer constraints")
+	main.fields["target.heading"].value = 1200.123456789
+	check(absf(main.model.settings.target.heading - deg_to_rad(1200.12)) < 1e-12,
+		"target angle GUI supports the configuration's multiple-turn range")
+	main.fields["target.center.x"].value = 24.0
+	check(main.model.settings.target.center.x == 24.0,
+		"position GUI supports valid configured positions beyond twenty meters")
+	var saved = "user://precision_%d.cfg" % OS.get_process_id()
+	check(Settings.save_file(main.model.settings, saved) == OK, "precise settings can be saved")
+	var loaded = Settings.load_file(saved)
+	check(loaded.ok and absf(loaded.settings.camera.vertical_fov - main.model.settings.camera.vertical_fov) < 1e-12,
+		"saved calibration reloads without display-step quantization")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(saved))
+	main.model.settings = original
+	main.model.reset()
+	main.armor_profiles.clear()
+	main._load_fields()
+	main.world.rebuild_target()
+	main.model.paused = was_paused
+
+
 func _run() -> void:
 	var main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
@@ -200,6 +297,7 @@ func _run() -> void:
 	check(is_equal_approx(main.fields["target.center.z"].value, 0.2), "initial lower-edge slider is 200 mm")
 	check(is_equal_approx(main.fields["target.height_difference"].value, -0.1), "initial height difference is -100 mm")
 	check(main.fields["target.radius"] is HSlider and is_equal_approx(main.fields["target.radius"].value, 0.55), "initial spacing slider is 550 mm")
+	await check_field_precision(main)
 	var transport = preload("res://scripts/bridge.gd").new()
 	main.model.settings.ipc.channel = "ui_test_%d" % OS.get_process_id()
 	check(transport.setup(main.model) == OK, "isolated shared memory publisher starts")
@@ -325,6 +423,8 @@ func _run() -> void:
 	main.camera_resolution.select(4)
 	main.camera_resolution.item_selected.emit(4)
 	for index in range(main.robot_select.item_count):
+		if Presets.is_rune(main.robot_select.get_item_metadata(index)):
+			continue # Independent rune UI/rendering is exercised by power_rune_ui.gd.
 		main.robot_select.select(index)
 		main.robot_select.item_selected.emit(index)
 		main.team_select.select(index % 2)

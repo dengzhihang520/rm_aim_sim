@@ -5,6 +5,7 @@
 | 资源 | 本仓库位置 | 上游 / 固定版本 | 许可证 |
 |---|---|---|---|
 | 装甲数字与哨兵图案 | `assets/stickers/*.png` | [tff345/label-robomaster](https://github.com/tff345/label-robomaster)，`b517820cc8591c056098b3ac808338b084b6eabd` | [MIT，Copyright (c) 2021 xinyang](assets/third_party/label_robomaster/LICENSE) |
+| 能量机关 R 标识描摹 | `assets/rune/center_r.svg` | [2027 官方规则 V1.0.0](https://bbs-web-static.robomaster.com/451e5737ba5d4463909a3013456a4e551792055647969/RoboMaster%202027%20%E6%9C%BA%E7%94%B2%E5%A4%A7%E5%B8%88%E8%B6%85%E7%BA%A7%E5%AF%B9%E6%8A%97%E8%B5%9B%E6%AF%94%E8%B5%9B%E8%A7%84%E5%88%99%E6%89%8B%E5%86%8CV1.0.0%EF%BC%8820261015%EF%BC%89.pdf) 图 4-33；[清单](assets/rune/sources.json) | DJI / RoboMaster 版权保留，不随项目 MIT 重新授权 |
 | 历史参考车体（当前不加载） | `assets/models/*.glb` | [rm-controls/rm_description](https://github.com/rm-controls/rm_description)，`a4b31828bf964e491d3ba5a731d12c1213562feb` | [BSD-3-Clause，Copyright (c) 2021 Qiayuan Liao](assets/third_party/rm_description/LICENSE) |
 
 逐文件来源、转换信息与哈希见 [贴图清单](assets/stickers/sources.json)、[模型清单](assets/third_party/rm_description/sources.json) 和 [模型说明](docs/models.md)。上述资源已随源码提供，正常启动不需要重新下载。

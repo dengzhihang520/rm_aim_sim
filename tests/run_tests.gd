@@ -69,6 +69,9 @@ func _run() -> void:
 func _test_settings() -> void:
 	check(Settings.validate(Settings.defaults()).is_empty(), "default settings valid")
 	check(Settings.load_file("res://configs/default.cfg").ok, "default config loads")
+	for scene in [Settings.defaults(), Settings.load_file("res://configs/default.cfg").settings]:
+		check(scene.appearance.robot == "infantry_3_2026" and scene.appearance.team == "blue",
+			"both code defaults and repository default config select blue infantry three")
 	approx(Settings.defaults().camera.brightness_gain, 0.4, 0.0, "camera exposure gain defaults to 0.4")
 	approx(Settings.load_file("res://configs/default.cfg").settings.camera.brightness_gain, 0.4, 0.0,
 		"default config uses 0.4 exposure gain")
@@ -106,10 +109,10 @@ func _test_settings() -> void:
 	s.ipc.channel = "../invalid"
 	check(not Settings.validate(s).is_empty(), "invalid IPC channel rejected")
 	s = Settings.defaults()
-	Presets.apply_robot(s, "hero")
+	Presets.apply_robot(s, "hero_2026")
 	approx(s.target.armor_width, 0.23, 1e-9, "hero uses large armor")
 	approx(s.target.lightbar_spacing, 0.23, 1e-9, "hero lightbar geometry follows preset")
-	check(Presets.ROBOTS.sentry.number == "7", "sentry number")
+	check(Presets.ROBOTS.sentry_2026.number == "7", "sentry number")
 	check(Presets.team_color("red") != Presets.team_color("blue"), "red and blue colors differ")
 	approx(s.target.module_width, 0.235, 1e-9, "hero physical module width")
 	approx(s.target.module_height, 0.127, 1e-9, "hero physical module height")
@@ -117,14 +120,14 @@ func _test_settings() -> void:
 		s = Settings.defaults()
 		s.appearance.robot = robot
 		var sim = Simulation.new(s)
-		check(sim.health == (400 if robot == "sentry" else 350), "RMUL 3v3 health: " + robot)
+		check(sim.health == (0 if Presets.is_rune(robot) else (400 if robot == "sentry_2026" else 350)), "target preset health: " + robot)
 	s.target.max_health = 35.5
 	check(not Settings.validate(s).is_empty(), "fractional health rejected")
 	s.target.max_health = -1
 	s.weapon.damage = 20.5
 	check(not Settings.validate(s).is_empty(), "fractional damage rejected")
 	var partial = ConfigFile.new()
-	partial.set_value("appearance", "robot", "hero")
+	partial.set_value("appearance", "robot", "hero_2026")
 	var path = "user://test_hero_dimensions.cfg"
 	check(partial.save(path) == OK, "partial hero configuration saved")
 	var loaded = Settings.load_file(path)

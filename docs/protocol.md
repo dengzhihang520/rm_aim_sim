@@ -194,7 +194,7 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 | `armors[].id` | 几何装甲索引 0–3，**不是**机器人编号 |
 | `armors[].corners` | 4×2 数组，像素 u 右/v 下，TL/TR/BR/BL |
 
-机器人编号由 `appearance.robot` 解释：infantry_3/4/5、hero(1)、sentry(7)。本协议不定义你模型内部的类别或颜色整数枚举。
+目标预设 `appearance.robot` 采用 `名称_年份`，当前车辆为 `infantry_3_2026/infantry_4_2026/infantry_5_2026`、`hero_2026`（1）、`sentry_2026`（7）；符为 `small_rune_2025/big_rune_2025/small_rune_2027/big_rune_2027`，没有装甲编号。本协议不定义你模型内部的类别或颜色整数枚举。
 
 ## 实时相机图像
 
@@ -266,3 +266,9 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 传输、实际姿态、出膛、命中、扣血与失联保护由 `tests/integration.py` 验证，图形相机由 `tests/ui_smoke.gd -- --no-ipc --camera-only` 及接图示例验证。具体命令见 README。它们不验证某个外部检测网络的识别率。
 
 相机需要渲染、GPU 读回、tmpfs 发布、像素复制/转换；状态频率、控制发送频率、相机帧率与检测帧率是不同指标。这里不提供与宿主机/模型无关的 FPS 保证，也不把历史单次测试值当作性能承诺。调试建议分别记录 `capture_timing`、接收/复制、检测、跟踪和控制耗时，再比较相同配置和负载。
+
+### 按年份的能量机关状态
+
+`state.json` 和相机同帧元数据增加可选顶层 `mode`（1 自瞄、2 小符、3 大符）与 `rune` 状态对象，协议仍为 `rm_aim_sim/2`。旧包缺少 `mode` 时客户端按历史自瞄模式处理；空闲/暂停/外控开关由各客户端按已有策略停控。`rune` 为诊断与评分数据，不能当成检测结果送入实车算法。字段见 [能量机关](power_rune.md)。
+
+符的 `truth.armors`、`camera.armors` 为空，原始相机像素通过同一握手发布。符使用按钮启动的练习模式，不再输出 `rune.match_time/opportunities/attempt_remaining` 等赛程字段；`sim_time`、接收时间及图像采样时间的含义不变。切换涉及符的型号更新 `session_id`、停止旧控制并清除旧目标弹丸，客户端须重新绑定会话，不能继续下发旧 session 的命令。

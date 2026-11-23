@@ -7,6 +7,7 @@ const PROJECTILE_COLOR = Color("39ff14")
 const RICOCHET_LIFETIME = 0.8
 
 var model: RefCounted
+var rune_view: Node3D
 var plates: Array[Node3D] = []
 var gun: Node3D
 var main_camera: Camera3D
@@ -112,6 +113,9 @@ func build(simulation: RefCounted) -> void:
 
 
 func rebuild_target() -> void:
+	if rune_view != null:
+		rune_view.free()
+		rune_view = null
 	for plate in plates:
 		plate.free()
 	plates.clear()
@@ -124,20 +128,26 @@ func rebuild_target() -> void:
 		effect.node.free()
 	ricochets.clear()
 	seen_impacts.clear()
-	for i in range(4):
-		var lamp_material = material(Presets.team_color(model.settings.appearance.team), 0.0, 1.1)
-		lamp_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		plate_materials.append(lamp_material)
-		var plate = Node3D.new()
-		add_child(plate)
-		plates.append(plate)
-		var custom = Assets.load_model(model.settings.appearance.armor_model)
-		if custom != null:
-			plate.add_child(Assets.fit_model(custom, model.settings.target.module_width,
-				model.settings.appearance.armor_scale, true))
-			Assets.tint_named_surfaces(custom, lamp_material)
-		else:
-			_build_armor(plate, lamp_material)
+	if model.is_rune():
+		rune_view = load("res://scripts/rune_view.gd").new()
+		add_child(rune_view)
+		rune_view.build(model)
+	else:
+		for i in range(4):
+			var lamp_material = material(Presets.team_color(model.settings.appearance.team), 0.0, 1.1)
+			lamp_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			plate_materials.append(lamp_material)
+			var plate = Node3D.new()
+			add_child(plate)
+			plates.append(plate)
+			var custom = Assets.load_model(model.settings.appearance.armor_model)
+			if custom != null:
+				plate.add_child(Assets.fit_model(custom, model.settings.target.module_width,
+					model.settings.appearance.armor_scale, true))
+				Assets.tint_named_surfaces(custom, lamp_material)
+			else:
+				_build_armor(plate, lamp_material)
+			_add_lamp_glow(plate)
 	sensor_viewport.size = Vector2i(model.settings.camera.width, model.settings.camera.height)
 	raw_sensor_viewport.size = sensor_viewport.size
 	sensor_camera.fov = model.settings.camera.vertical_fov
@@ -160,7 +170,6 @@ func _build_armor(plate: Node3D, lamp_material: StandardMaterial3D) -> void:
 			box(plate, part.size, part.position, lamp_material)
 		else:
 			_armor_shell(plate, part.size, part.position, face_material)
-	_add_lamp_glow(plate)
 	if image != null:
 		var texture = AtlasTexture.new()
 		texture.atlas = ImageTexture.create_from_image(image)
@@ -221,7 +230,7 @@ func _add_lamp_glow(plate: Node3D) -> void:
 	for sign_value in [-1.0, 1.0]:
 		var node = MeshInstance3D.new()
 		var mesh = QuadMesh.new()
-		mesh.size = Vector2(0.025, model.settings.target.lightbar_length + 0.02)
+		mesh.size = Vector2(0.145, model.settings.target.lightbar_length + 0.14)
 		var glow = ShaderMaterial.new()
 		glow.shader = preload("res://shaders/lamp_glow.gdshader")
 		glow.set_shader_parameter("team_color", Presets.team_color(model.settings.appearance.team))
@@ -237,6 +246,8 @@ func _add_lamp_glow(plate: Node3D) -> void:
 
 
 func _update_lights() -> void:
+	if model.is_rune():
+		return
 	for index in range(plates.size()):
 		var lit: bool = model.armor_light_on(index)
 		var lamp_material = plate_materials[index]
@@ -254,7 +265,9 @@ func update_world() -> void:
 	raw_sensor_viewport.size = sensor_viewport.size
 	sensor_camera.fov = model.settings.camera.vertical_fov
 	var pose = model.target_pose(model.time)
-	for i in range(4):
+	if rune_view != null:
+		rune_view.update_view()
+	for i in range(plates.size()):
 		var a = model.armor_pose(i, model.time)
 		plates[i].transform = Transform3D(Basis(to_engine(a.tangent), to_engine(a.up), to_engine(a.normal)), to_engine(a.center))
 	var camera = model.camera_pose()
@@ -283,7 +296,7 @@ func _update_camera_exposure() -> void:
 	widths.resize(8)
 	var count = 0
 	var camera_origin: Vector3 = model.camera_pose().origin
-	if model.health > 0:
+	if not model.is_rune() and model.health > 0:
 		for index in range(4):
 			# The sensor's reconstructed LED signal must follow the same hit/death state as the mesh.
 			if not model.armor_light_on(index):

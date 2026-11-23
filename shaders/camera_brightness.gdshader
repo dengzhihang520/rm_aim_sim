@@ -35,7 +35,9 @@ void fragment() {
 		float along = abs(dot(relative, axis));
 		float width_px = max(lamp_widths[i], 0.25);
 		vec2 outside = max(vec2(across - width_px * 0.5, along - length_px * 0.5), vec2(0.0));
-		float halo = exp(-length(outside) / max(width_px * 0.5, 0.5));
+		float distance_to_lamp = length(outside);
+		float halo = exp(-distance_to_lamp / max(width_px * 2.0, 0.5));
+		halo *= 1.0 - smoothstep(width_px * 6.4, width_px * 9.6, distance_to_lamp);
 		float core = (1.0 - smoothstep(width_px * 0.15, width_px * 0.6, across))
 			* (1.0 - smoothstep(length_px * 0.43, length_px * 0.5 + 0.5, along));
 		// Keep LED energy above sensor saturation until after exposure. Printed white stays reflective.

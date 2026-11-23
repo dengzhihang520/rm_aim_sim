@@ -1,11 +1,14 @@
 extends RefCounted
 
+const PowerRune = preload("res://scripts/power_rune.gd")
+
 const Settings = preload("res://scripts/settings.gd")
 const Presets = preload("res://scripts/presets.gd")
 const MAX_COLLISION_DT = 0.001
 const MAX_PROJECTILES = 512
 const HIT_FLASH_DURATION = 0.05
 
+var rune = PowerRune.new()
 var settings: Dictionary
 var time = 0.0
 var tick = 0
@@ -77,13 +80,20 @@ func reset(initial: Dictionary = {}) -> void:
 	rotation_origin = settings.target.phase
 	rotation_epoch = 0.0
 	motion_stop_time = 0.0 if health <= 0 else -1.0
+	if is_rune():
+		rune.reset(settings.appearance.robot)
+		_center_view(rune_center())
 
 
 func _configured_health(s: Dictionary) -> int:
+	if Presets.is_rune(s.appearance.robot):
+		return 0
 	return int(Presets.ROBOTS[s.appearance.robot].max_health if s.target.max_health < 0 else s.target.max_health)
 
 
 func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
+	var switched = updated.appearance.robot != settings.appearance.robot
+	var was_rune = is_rune()
 	var pose = target_pose(time)
 	var motion = _translation_state(time)
 	var was_stopped = motion_stop_time >= 0.0
@@ -122,6 +132,26 @@ func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 		next_health_event_id += 1
 		_trim_events()
 	motion_stop_time = time if health <= 0 else -1.0
+	if switched and (was_rune or is_rune()):
+		stop()
+		# Settle removed bullets so fired == resolved + in_flight remains true across target switches.
+		for bullet in projectiles:
+			_finish(bullet, {"kind": "expired", "time": time, "point": bullet_position(bullet, time),
+				"reason": "target_changed"})
+		projectiles.clear()
+		session_id = "%d-%d" % [Time.get_ticks_usec(), randi()]
+		if is_rune():
+			rune.reset(settings.appearance.robot)
+			rune.time = time
+		elif was_rune:
+			translation_origin = settings.target.center
+			translation_start_offset = 0.0
+			translation_epoch = time
+			rotation_origin = settings.target.phase
+			rotation_epoch = time
+		if was_rune != is_rune():
+			# A different target category may be outside the previous gimbal view.
+			_center_view(target_pose(time).center)
 
 
 func set_command(value: Dictionary) -> void:
@@ -198,6 +228,8 @@ func _translation_state(at: float) -> Dictionary:
 
 
 func target_pose(at: float) -> Dictionary:
+	if is_rune():
+		return {"center": rune_center(), "angle": settings.rune.heading}
 	var motion_at = minf(at, motion_stop_time) if motion_stop_time >= 0.0 else at
 	var t: Dictionary = settings.target
 	var center = translation_origin
@@ -239,7 +271,7 @@ func camera_observation() -> Dictionary:
 	var c: Dictionary = settings.camera
 	var fy = 0.5 * c.height / tan(deg_to_rad(c.vertical_fov) * 0.5)
 	var armors: Array[Dictionary] = []
-	for i in range(4):
+	for i in range(0 if is_rune() else 4):
 		if not armor_light_on(i):
 			continue
 		var armor = armor_pose(i, time)
@@ -276,7 +308,7 @@ func step(dt: float) -> void:
 	if paused or dt <= 0.0:
 		return
 	# Collision resolution is independent of rendering and also bounded during fast rotation.
-	var rotation_dt = 0.005 / maxf(absf(settings.target.omega), 1.0)
+	var rotation_dt = 0.005 / maxf(absf(rune.speed(time) if is_rune() else settings.target.omega), 1.0)
 	var count = maxi(1, ceili(dt / minf(MAX_COLLISION_DT, rotation_dt)))
 	var h = dt / count
 	for _i in range(count):
@@ -318,17 +350,26 @@ func _substep(dt: float) -> void:
 		var release = pending.pop_front()
 		var weight = clampf((release - time) / dt, 0.0, 1.0)
 		_spawn(release, lerp_angle(old_yaw, yaw, weight), lerpf(old_pitch, pitch, weight))
+	var contacts: Array[Dictionary] = []
 	for i in range(projectiles.size() - 1, -1, -1):
 		var bullet = projectiles[i]
 		var start: float = maxf(time, bullet.born)
 		var result = _collision(bullet, start, end)
 		if not result.is_empty():
-			_finish(bullet, result)
+			if is_rune():
+				contacts.append({"bullet": bullet, "result": result})
+			else:
+				_finish(bullet, result)
 			projectiles.remove_at(i)
 		elif end - bullet.born >= settings.weapon.lifetime or _outside_target_range(bullet, end):
 			_finish(bullet, {"kind": "expired", "time": end, "point": bullet_position(bullet, end),
 				"reason": "lifetime" if end - bullet.born >= settings.weapon.lifetime else "range"})
 			projectiles.remove_at(i)
+	contacts.sort_custom(func(left, right): return left.result.time < right.result.time)
+	for contact in contacts:
+		_finish(contact.bullet, contact.result)
+	if is_rune():
+		rune.advance(end)
 	time = end
 
 
@@ -353,6 +394,11 @@ func bullet_position(bullet: Dictionary, at: float) -> Vector3:
 
 
 func _outside_target_range(bullet: Dictionary, at: float) -> bool:
+	if is_rune():
+		var center = rune_center() - bullet.origin
+		var distance = Vector2(center.x, center.y).length() + 1.0
+		var point = bullet_position(bullet, at) - bullet.origin
+		return Vector2(point.x, point.y).length_squared() > distance * distance
 	var origin: Vector3 = bullet.origin
 	var offset = Vector2(translation_origin.x - origin.x, translation_origin.y - origin.y)
 	var half_diagonal = Vector2(settings.target.armor_width, settings.target.armor_height).length() * 0.5
@@ -365,6 +411,8 @@ func _outside_target_range(bullet: Dictionary, at: float) -> bool:
 
 
 func _collision(bullet: Dictionary, start: float, end: float) -> Dictionary:
+	if is_rune():
+		return _rune_collision(bullet, start, end)
 	var p0 = bullet_position(bullet, start)
 	var p1 = bullet_position(bullet, end)
 	var best: Dictionary = {}
@@ -403,16 +451,22 @@ func _collision(bullet: Dictionary, start: float, end: float) -> Dictionary:
 
 
 func _finish(bullet: Dictionary, result: Dictionary) -> void:
+	var rune_hit: Dictionary = {}
+	if is_rune() and result.has("blade"):
+		rune_hit = rune.receive_hit(result.blade, result.radial_distance, result.time)
+		result.kind = "hit" if rune_hit.accepted else "body"
 	stats[result.kind] += 1
 	if result.kind == "hit" and first_hit_time < 0.0:
 		first_hit_time = result.time
 	var event = {"type": "impact", "id": bullet.id, "kind": result.kind,
 		"time": result.time, "point": vec(result.point), "armor_id": result.get("armor_id", -1)}
+	if not rune_hit.is_empty():
+		event["rune"] = rune_hit
 	if result.has("reason"):
 		event["reason"] = result.reason
 	var damage = 0
 	var killed = false
-	if result.kind == "hit" and health > 0:
+	if not is_rune() and result.kind == "hit" and health > 0:
 		var armor_id: int = result.armor_id
 		armor_light_off_until[armor_id] = maxf(armor_light_off_until[armor_id], result.time + HIT_FLASH_DURATION)
 		damage = mini(health, int(bullet.get("damage", settings.weapon.damage)))
@@ -457,11 +511,13 @@ func snapshot() -> Dictionary:
 	var pose = target_pose(time)
 	var orientation = Quaternion(Vector3(0, 0, 1), yaw) * Quaternion(Vector3(0, 1, 0), pitch)
 	var armors: Array[Dictionary] = []
-	for i in range(4):
+	for i in range(0 if is_rune() else 4):
 		var a = armor_pose(i, time)
 		armors.append({"id": i, "center": vec(a.center), "normal": vec(a.normal),
 			"normal_yaw": a.normal_yaw})
 	return {"protocol": "rm_aim_sim/2", "type": "state", "session_id": session_id,
+		"mode": (3 if rune.big else 2) if is_rune() else 1,
+		"rune": rune.snapshot() if is_rune() else {},
 		"tick": tick, "sim_time": time, "paused": paused,
 		"gimbal": {"yaw": yaw, "pitch": pitch, "yaw_vel": yaw_velocity,
 			"pitch_vel": pitch_velocity, "origin": vec(settings.gimbal.origin),
@@ -478,3 +534,65 @@ func snapshot() -> Dictionary:
 
 static func vec(v: Vector3) -> Array:
 	return [v.x, v.y, v.z]
+
+
+func is_rune() -> bool:
+	return Presets.is_rune(settings.appearance.robot)
+
+
+func rune_center() -> Vector3:
+	# Placement uses the initial, unrotated camera's horizontal axes, not its live gimbal pose.
+	return Vector3(settings.gimbal.origin.x + settings.camera.offset.x + settings.rune.forward,
+		settings.gimbal.origin.y + settings.camera.offset.y + settings.rune.lateral, settings.rune.height)
+
+
+func rune_basis() -> Basis:
+	var heading: float = settings.rune.heading
+	return Basis(Vector3(sin(heading), -cos(heading), 0), Vector3(0, 0, 1),
+		Vector3(-cos(heading), -sin(heading), 0))
+
+
+func rune_pose(index: int, at: float) -> Dictionary:
+	var basis = rune_basis()
+	var phase: float = rune.phase(at) + index * TAU / 5.0
+	var radial = basis.x * sin(phase) + basis.y * cos(phase)
+	return {"center": rune_center() + radial * PowerRune.RADIUS, "normal": basis.z,
+		"tangent": basis.x, "up": basis.y, "phase": phase}
+
+
+func _center_view(center: Vector3) -> void:
+	for _i in range(8):
+		var delta = center - camera_pose().origin
+		yaw = atan2(delta.y, delta.x)
+		pitch = clampf(-atan2(delta.z, Vector2(delta.x, delta.y).length()),
+			settings.gimbal.pitch_min, settings.gimbal.pitch_max)
+	yaw_velocity = 0.0
+	pitch_velocity = 0.0
+	command.yaw = yaw
+	command.pitch = pitch
+
+
+func _rune_collision(bullet: Dictionary, start: float, end: float) -> Dictionary:
+	var p0 = bullet_position(bullet, start)
+	var p1 = bullet_position(bullet, end)
+	var center = rune_center()
+	var normal = rune_basis().z
+	var d0: float = (p0 - center).dot(normal)
+	var d1: float = (p1 - center).dot(normal)
+	var best: Dictionary = {}
+	if d0 >= 0.0 and d1 <= 0.0 and d0 > d1:
+		var at = lerpf(start, end, d0 / (d0 - d1))
+		var point = bullet_position(bullet, at)
+		for i in range(5):
+			var pose = rune_pose(i, at)
+			var distance: float = point.distance_to(pose.center)
+			if distance <= PowerRune.TARGET_RADIUS:
+				best = {"kind": "body", "blade": i, "radial_distance": distance,
+					"time": at, "point": point, "normal": normal}
+				break
+	if p1.z <= 0.0:
+		var at = lerpf(start, end, clampf(p0.z / maxf(p0.z - p1.z, 1e-12), 0, 1))
+		if best.is_empty() or at < best.time:
+			best = {"kind": "ground", "time": at, "point": bullet_position(bullet, at),
+				"normal": Vector3(0, 0, 1)}
+	return best
