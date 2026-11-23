@@ -120,7 +120,7 @@ func _test_settings() -> void:
 		s = Settings.defaults()
 		s.appearance.robot = robot
 		var sim = Simulation.new(s)
-		check(sim.health == (0 if Presets.is_rune(robot) else (400 if robot == "sentry_2026" else 350)), "target preset health: " + robot)
+		check(sim.health == (0 if Presets.is_rune(robot) else (1500 if robot == "outpost_2026" else (400 if robot == "sentry_2026" else 350))), "target preset health: " + robot)
 	s.target.max_health = 35.5
 	check(not Settings.validate(s).is_empty(), "fractional health rejected")
 	s.target.max_health = -1

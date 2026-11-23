@@ -7,7 +7,7 @@ static func solve(model: RefCounted, predict: bool = true) -> Dictionary:
 		return {}
 	var best: Dictionary = {}
 	var closest = INF
-	for index in (model.rune.targets if model.is_rune() else range(4)):
+	for index in (model.rune.targets if model.is_rune() else range(model.armor_count())):
 		var candidate = _candidate(model, index, model.time, predict)
 		if not candidate.is_empty() and candidate.distance < closest:
 			closest = candidate.distance
@@ -42,6 +42,8 @@ static func _candidate(model: RefCounted, index: int, at: float, predict: bool) 
 		flight = result.flight_time
 		if change < 1e-7:
 			break
+	if not model.has_line_of_sight(origin, armor.center):
+		return {}
 	if (origin - armor.center).normalized().dot(armor.normal) <= 0.2:
 		return {}
 	if result.pitch < model.settings.gimbal.pitch_min or result.pitch > model.settings.gimbal.pitch_max \

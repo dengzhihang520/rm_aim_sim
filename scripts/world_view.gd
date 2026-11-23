@@ -8,6 +8,7 @@ const RICOCHET_LIFETIME = 0.8
 
 var model: RefCounted
 var rune_view: Node3D
+var outpost_view: Node3D
 var plates: Array[Node3D] = []
 var gun: Node3D
 var main_camera: Camera3D
@@ -113,6 +114,9 @@ func build(simulation: RefCounted) -> void:
 
 
 func rebuild_target() -> void:
+	if outpost_view != null:
+		outpost_view.free()
+		outpost_view = null
 	if rune_view != null:
 		rune_view.free()
 		rune_view = null
@@ -133,15 +137,21 @@ func rebuild_target() -> void:
 		add_child(rune_view)
 		rune_view.build(model)
 	else:
-		for i in range(4):
+		if model.is_outpost():
+			outpost_view = load("res://scripts/outpost_view.gd").new()
+			add_child(outpost_view)
+			outpost_view.build(model, self)
+		for i in range(model.armor_count()):
 			var lamp_material = material(Presets.team_color(model.settings.appearance.team), 0.0, 1.1)
 			lamp_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 			plate_materials.append(lamp_material)
 			var plate = Node3D.new()
 			add_child(plate)
 			plates.append(plate)
-			var custom = Assets.load_model(model.settings.appearance.armor_model)
-			if custom != null:
+			var custom = Assets.load_model(model.settings.appearance.armor_model) if not model.is_outpost() else null
+			if model.is_outpost():
+				outpost_view.build_armor(plate, lamp_material)
+			elif custom != null:
 				plate.add_child(Assets.fit_model(custom, model.settings.target.module_width,
 					model.settings.appearance.armor_scale, true))
 				Assets.tint_named_surfaces(custom, lamp_material)
@@ -222,6 +232,7 @@ func _armor_shell(parent: Node3D, size: Vector3, origin: Vector3, mat: Material)
 
 
 func _add_lamp_glow(plate: Node3D) -> void:
+	var geometry = model.armor_geometry()
 	# Glare is optical, outside the physical collision/envelope geometry.
 	var group = Node3D.new()
 	group.name = "LampGlare"
@@ -230,17 +241,17 @@ func _add_lamp_glow(plate: Node3D) -> void:
 	for sign_value in [-1.0, 1.0]:
 		var node = MeshInstance3D.new()
 		var mesh = QuadMesh.new()
-		mesh.size = Vector2(0.145, model.settings.target.lightbar_length + 0.14)
+		mesh.size = Vector2(0.145, geometry.lightbar_length + 0.14)
 		var glow = ShaderMaterial.new()
 		glow.shader = preload("res://shaders/lamp_glow.gdshader")
 		glow.set_shader_parameter("team_color", Presets.team_color(model.settings.appearance.team))
 		glow.set_shader_parameter("core_color",
 			Color("fff0dc") if model.settings.appearance.team == "red" else Color("dcfaff"))
-		glow.set_shader_parameter("lamp_length", model.settings.target.lightbar_length)
+		glow.set_shader_parameter("lamp_length", geometry.lightbar_length)
 		glow.set_shader_parameter("plane_size", mesh.size)
 		node.mesh = mesh
 		node.material_override = glow
-		node.position = Vector3(sign_value * model.settings.target.lightbar_spacing * 0.5, 0, 0.0112)
+		node.position = Vector3(sign_value * geometry.lightbar_spacing * 0.5, 0, 0.0112)
 		node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		group.add_child(node)
 
@@ -267,6 +278,8 @@ func update_world() -> void:
 	var pose = model.target_pose(model.time)
 	if rune_view != null:
 		rune_view.update_view()
+	if outpost_view != null:
+		outpost_view.update_view()
 	for i in range(plates.size()):
 		var a = model.armor_pose(i, model.time)
 		plates[i].transform = Transform3D(Basis(to_engine(a.tangent), to_engine(a.up), to_engine(a.normal)), to_engine(a.center))
@@ -295,9 +308,10 @@ func _update_camera_exposure() -> void:
 	segments.resize(8)
 	widths.resize(8)
 	var count = 0
+	var geometry = model.armor_geometry()
 	var camera_origin: Vector3 = model.camera_pose().origin
 	if not model.is_rune() and model.health > 0:
-		for index in range(4):
+		for index in range(model.armor_count()):
 			# The sensor's reconstructed LED signal must follow the same hit/death state as the mesh.
 			if not model.armor_light_on(index):
 				continue
@@ -305,10 +319,12 @@ func _update_camera_exposure() -> void:
 			if (camera_origin - armor.center).dot(armor.normal) <= 0.0:
 				continue
 			for side in [-1.0, 1.0]:
-				var center: Vector3 = armor.center + armor.tangent * side * model.settings.target.lightbar_spacing * 0.5
+				var center: Vector3 = armor.center + armor.tangent * side * geometry.lightbar_spacing * 0.5
 				center += armor.normal * 0.0112
-				var top = to_engine(center + armor.up * model.settings.target.lightbar_length * 0.5)
-				var bottom = to_engine(center - armor.up * model.settings.target.lightbar_length * 0.5)
+				if not model.has_line_of_sight(camera_origin, center):
+					continue
+				var top = to_engine(center + armor.up * geometry.lightbar_length * 0.5)
+				var bottom = to_engine(center - armor.up * geometry.lightbar_length * 0.5)
 				if sensor_camera.is_position_behind(top) or sensor_camera.is_position_behind(bottom):
 					continue
 				var start = sensor_camera.unproject_position(top)

@@ -1,0 +1,11 @@
+{
+  "mark.svg": {
+    "source": "https://bbs.robomaster.com/wiki/20204847/809871?source=7",
+    "document": "RMUC2026 V2.2.0 (20260807)",
+    "figure": "5-17, printed page98 / PDF page99, first group (outpost: dot-topped narrow tower)",
+    "derivation": "White mark traced from embedded image xref349 in the official PDF; contiguous contours preserve the top dot, inner stem and holes. The second group on printed page99 is the Base and is not used.",
+    "copyright": "DJI / RoboMaster; not relicensed under the project MIT license.",
+    "source_pdf_sha256": "88ae3c7d0bbd7312c8095eff2603910437e292a0b53f46c9378f26144c09a6f5",
+    "sha256": "b60bc4e4e6ab87e1f17b64024057680bc9d4eec3ef0544320c487f821c28b727"
+  }
+}

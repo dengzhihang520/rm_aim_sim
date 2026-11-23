@@ -20,6 +20,7 @@ const ROBOTS = {
 	"sentry_2026": {"type": "armor", "year": 2026, "label": "哨兵 7（2026）", "number": "7", "width": 0.135, "height": 0.125,
 		"module_width": 0.140, "module_height": 0.125, "max_health": 400,
 		"sticker": "res://assets/stickers/sentry.png", "sticker_region": Rect2(110, 85, 400, 375)},
+	"outpost_2026": {"type": "outpost", "year": 2026, "label": "前哨站（2026）", "number": "outpost", "max_health": 1500},
 	"small_rune_2025": {"type": "rune", "year": 2025, "size": "small", "label": "小能量机关（2025）", "number": "", "max_health": 0},
 	"big_rune_2025": {"type": "rune", "year": 2025, "size": "big", "label": "大能量机关（2025）", "number": "", "max_health": 0},
 	"small_rune_2027": {"type": "rune", "year": 2027, "size": "small", "label": "小能量机关（2027）", "number": "", "max_health": 0},
@@ -28,7 +29,7 @@ const ROBOTS = {
 
 
 static func apply_robot(settings: Dictionary, robot: String) -> void:
-	if is_rune(robot):
+	if ROBOTS[robot].type != "armor":
 		settings.appearance.robot = robot
 		return
 	var lower = lower_edge(settings.target)
@@ -125,3 +126,7 @@ static func resolve_name(robot: String) -> String:
 		"infantry_5": "infantry_5_2026", "hero": "hero_2026", "sentry": "sentry_2026",
 		"small_rune": "small_rune_2027", "big_rune": "big_rune_2027"}
 	return LEGACY.get(robot, robot)
+
+
+static func is_outpost(robot: String) -> bool:
+	return ROBOTS.has(robot) and ROBOTS[robot].type == "outpost"

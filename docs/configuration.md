@@ -51,6 +51,7 @@ Godot 参数放在 `--` 前，项目参数放在 `--` 后。例如：
 | `configs/translate.cfg` | 开启 1.5 m/s 平移，往返半程 1.5 m |
 | `configs/spin.cfg` | 仅自转，其他参数继承代码默认值 |
 | `configs/combined.cfg` | 平移加自转 |
+| `configs/outpost_2026.cfg` | 2026前哨站，三块分层装甲，正常自瞄模式；配置与边界见[outpost.md](outpost.md) |
 | `configs/small_rune_2025.cfg` / `configs/big_rune_2025.cfg` | 2025 大小符，单目标五支架流程 |
 | `configs/small_rune_2027.cfg` / `configs/big_rune_2027.cfg` | 2027 大小符，大符双目标五组流程 |
 | `configs/vision.cfg` | 显式固定默认 1440×1080 / 45° 相机，其他参数继承默认值 |
@@ -65,7 +66,7 @@ Godot 参数放在 `--` 前，项目参数放在 `--` 后。例如：
 
 | 字段 | 默认值 | 范围 / 含义 |
 |---|---|---|
-| `robot` | `"infantry_3_2026"` | 车辆：`infantry_3_2026/infantry_4_2026/infantry_5_2026/hero_2026/sentry_2026`；符：`small_rune_2025/big_rune_2025/small_rune_2027/big_rune_2027` |
+| `robot` | `"infantry_3_2026"` | 车辆：`infantry_3_2026/infantry_4_2026/infantry_5_2026/hero_2026/sentry_2026`；前哨站：`outpost_2026`；符：`small_rune_2025/big_rune_2025/small_rune_2027/big_rune_2027` |
 | `team` | `"blue"` | `blue/red`；协议给出字符串，算法颜色枚举自行映射 |
 | `armor_model` | `""` | 空为内置外观；支持的模型与轴约定见 [models.md](models.md) |
 | `armor_scale` | `1.0` | [0.001,1000]，自定义模型归一化后的倍率，不改变命中区 |
@@ -85,6 +86,10 @@ Godot 参数放在 `--` 前，项目参数放在 `--` 后。例如：
 | `height` | `2.6` | [0.9,5] m，符心离地高度 |
 
 默认启动为 2026 步兵 3 号，符通过下拉框手动选择。符安装不会跟随实时云台旋转。装甲与符互相切换时，仿真自动将云台对准新目标中心并清零残余角速度，保留时间、累计统计和内参；同类目标切换保留视角。选择符后隐藏装甲专属控件，切回车辆恢复装甲参数。此处对准只用于仿真场景取景，不向外部算法提供真值控制。
+
+### outpost：2026前哨站
+
+只在`outpost_2026`预设使用：`forward`默认4.00、范围[1,20]m；`lateral`默认0.00、范围[-15,15]m；`base_height`默认0.30、范围[0,2]m；`opponent_base_open`默认false，模拟对方基地护甲展开，触发本轮不可逆停转。均可省略，未知项及错误类型报错。位置相对初始相机，不随实时云台转动。界面隐藏车辆平移、转速、几何和伤害设置，保留正常弹速/射频/相机设置；详细规则、图纸取值和重建训练范围见[outpost.md](outpost.md)。
 
 ### target：目标与装甲
 

@@ -1,6 +1,7 @@
 extends RefCounted
 
 const PowerRune = preload("res://scripts/power_rune.gd")
+const Outpost = preload("res://scripts/outpost.gd")
 
 const Settings = preload("res://scripts/settings.gd")
 const Presets = preload("res://scripts/presets.gd")
@@ -9,6 +10,8 @@ const MAX_PROJECTILES = 512
 const HIT_FLASH_DURATION = 0.05
 
 var rune = PowerRune.new()
+var outpost = Outpost.new()
+var outpost_parts: Array[Dictionary] = []
 var settings: Dictionary
 var time = 0.0
 var tick = 0
@@ -71,7 +74,7 @@ func reset(initial: Dictionary = {}) -> void:
 	health = max_health
 	death_time = -1.0
 	next_health_event_id = 0
-	armor_light_off_until.resize(4)
+	armor_light_off_until.resize(armor_count())
 	armor_light_off_until.fill(0.0)
 	translation_origin = settings.target.center
 	translation_epoch = 0.0
@@ -83,17 +86,26 @@ func reset(initial: Dictionary = {}) -> void:
 	if is_rune():
 		rune.reset(settings.appearance.robot)
 		_center_view(rune_center())
+	if is_outpost():
+		outpost.reset(time)
+		outpost.advance(time, false, settings.outpost.opponent_base_open)
+		outpost_parts = Outpost.body_parts(settings.outpost.base_height)
+		_center_view(target_pose(time).center)
 
 
 func _configured_health(s: Dictionary) -> int:
 	if Presets.is_rune(s.appearance.robot):
 		return 0
+	if Presets.is_outpost(s.appearance.robot):
+		return 1500
 	return int(Presets.ROBOTS[s.appearance.robot].max_health if s.target.max_health < 0 else s.target.max_health)
 
 
 func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 	var switched = updated.appearance.robot != settings.appearance.robot
 	var was_rune = is_rune()
+	var was_outpost = is_outpost()
+	var previous_type: String = Presets.ROBOTS[settings.appearance.robot].type
 	var pose = target_pose(time)
 	var motion = _translation_state(time)
 	var was_stopped = motion_stop_time >= 0.0
@@ -122,6 +134,7 @@ func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 	var health_changed: bool = reset_health or updated.target.max_health != settings.target.max_health \
 		or updated.appearance.robot != settings.appearance.robot
 	settings = updated.duplicate(true)
+	armor_light_off_until.resize(armor_count())
 	if health_changed:
 		max_health = _configured_health(settings)
 		health = max_health
@@ -132,7 +145,7 @@ func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 		next_health_event_id += 1
 		_trim_events()
 	motion_stop_time = time if health <= 0 else -1.0
-	if switched and (was_rune or is_rune()):
+	if switched and (was_rune or is_rune() or was_outpost or is_outpost()):
 		stop()
 		# Settle removed bullets so fired == resolved + in_flight remains true across target switches.
 		for bullet in projectiles:
@@ -143,15 +156,20 @@ func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 		if is_rune():
 			rune.reset(settings.appearance.robot)
 			rune.time = time
-		elif was_rune:
+		elif was_rune or was_outpost:
 			translation_origin = settings.target.center
 			translation_start_offset = 0.0
 			translation_epoch = time
 			rotation_origin = settings.target.phase
 			rotation_epoch = time
-		if was_rune != is_rune():
+		if is_outpost():
+			outpost.reset(time)
+		if previous_type != Presets.ROBOTS[settings.appearance.robot].type:
 			# A different target category may be outside the previous gimbal view.
 			_center_view(target_pose(time).center)
+	if is_outpost():
+		outpost_parts = Outpost.body_parts(settings.outpost.base_height)
+		outpost.advance(time, health <= 0, settings.outpost.opponent_base_open)
 
 
 func set_command(value: Dictionary) -> void:
@@ -230,6 +248,8 @@ func _translation_state(at: float) -> Dictionary:
 func target_pose(at: float) -> Dictionary:
 	if is_rune():
 		return {"center": rune_center(), "angle": settings.rune.heading}
+	if is_outpost():
+		return {"center": outpost_base() + Vector3(0, 0, settings.outpost.base_height + 1.216), "angle": outpost.phase(at)}
 	var motion_at = minf(at, motion_stop_time) if motion_stop_time >= 0.0 else at
 	var t: Dictionary = settings.target
 	var center = translation_origin
@@ -241,6 +261,15 @@ func target_pose(at: float) -> Dictionary:
 
 func armor_pose(index: int, at: float) -> Dictionary:
 	var pose = target_pose(at)
+	if is_outpost():
+		var angle: float = pose.angle + index * TAU / 3.0
+		var radial = Vector3(cos(angle), sin(angle), 0)
+		var tangent = Vector3(-sin(angle), cos(angle), 0)
+		var normal = radial * cos(Outpost.TILT) + Vector3(0, 0, sin(Outpost.TILT))
+		var center = outpost_base() + radial * Outpost.RADIUS
+		center.z = settings.outpost.base_height + Outpost.HEIGHTS[index]
+		return {"id": index, "center": center, "normal": normal, "tangent": tangent,
+			"up": normal.cross(tangent), "normal_yaw": wrapf(angle, -PI, PI)}
 	var angle: float = pose.angle + index * TAU / 4.0
 	var radial = Vector3(cos(angle), sin(angle), 0.0)
 	var normal = radial * cos(settings.target.armor_tilt) + Vector3(0, 0, sin(settings.target.armor_tilt))
@@ -271,7 +300,8 @@ func camera_observation() -> Dictionary:
 	var c: Dictionary = settings.camera
 	var fy = 0.5 * c.height / tan(deg_to_rad(c.vertical_fov) * 0.5)
 	var armors: Array[Dictionary] = []
-	for i in range(0 if is_rune() else 4):
+	var geometry = armor_geometry()
+	for i in range(armor_count()):
 		if not armor_light_on(i):
 			continue
 		var armor = armor_pose(i, time)
@@ -281,8 +311,11 @@ func camera_observation() -> Dictionary:
 		var all_in_frame = true
 		# Order: top-left, top-right, bottom-right, bottom-left as seen from the face.
 		for uv in [Vector2(-1, 1), Vector2(1, 1), Vector2(1, -1), Vector2(-1, -1)]:
-			var point: Vector3 = armor.center + armor.tangent * uv.x * settings.target.lightbar_spacing * 0.5
-			point += armor.up * uv.y * settings.target.lightbar_length * 0.5
+			var point: Vector3 = armor.center + armor.tangent * uv.x * geometry.lightbar_spacing * 0.5
+			point += armor.up * uv.y * geometry.lightbar_length * 0.5
+			if is_outpost() and not has_line_of_sight(pose.origin, point):
+				all_in_frame = false
+				break
 			var rel: Vector3 = point - pose.origin
 			var depth: float = rel.dot(pose.forward)
 			if depth <= 0.01:
@@ -308,7 +341,8 @@ func step(dt: float) -> void:
 	if paused or dt <= 0.0:
 		return
 	# Collision resolution is independent of rendering and also bounded during fast rotation.
-	var rotation_dt = 0.005 / maxf(absf(rune.speed(time) if is_rune() else settings.target.omega), 1.0)
+	var angular_speed: float = outpost.speed(time) if is_outpost() else (rune.speed(time) if is_rune() else settings.target.omega)
+	var rotation_dt = 0.005 / maxf(absf(angular_speed), 1.0)
 	var count = maxi(1, ceili(dt / minf(MAX_COLLISION_DT, rotation_dt)))
 	var h = dt / count
 	for _i in range(count):
@@ -356,7 +390,7 @@ func _substep(dt: float) -> void:
 		var start: float = maxf(time, bullet.born)
 		var result = _collision(bullet, start, end)
 		if not result.is_empty():
-			if is_rune():
+			if is_rune() or is_outpost():
 				contacts.append({"bullet": bullet, "result": result})
 			else:
 				_finish(bullet, result)
@@ -370,6 +404,8 @@ func _substep(dt: float) -> void:
 		_finish(contact.bullet, contact.result)
 	if is_rune():
 		rune.advance(end)
+	if is_outpost():
+		outpost.advance(end, health <= 0, settings.outpost.opponent_base_open)
 	time = end
 
 
@@ -394,8 +430,8 @@ func bullet_position(bullet: Dictionary, at: float) -> Vector3:
 
 
 func _outside_target_range(bullet: Dictionary, at: float) -> bool:
-	if is_rune():
-		var center = rune_center() - bullet.origin
+	if is_rune() or is_outpost():
+		var center = (rune_center() if is_rune() else outpost_base()) - bullet.origin
 		var distance = Vector2(center.x, center.y).length() + 1.0
 		var point = bullet_position(bullet, at) - bullet.origin
 		return Vector2(point.x, point.y).length_squared() > distance * distance
@@ -413,6 +449,8 @@ func _outside_target_range(bullet: Dictionary, at: float) -> bool:
 func _collision(bullet: Dictionary, start: float, end: float) -> Dictionary:
 	if is_rune():
 		return _rune_collision(bullet, start, end)
+	if is_outpost():
+		return _outpost_collision(bullet, start, end)
 	var p0 = bullet_position(bullet, start)
 	var p1 = bullet_position(bullet, end)
 	var best: Dictionary = {}
@@ -455,6 +493,11 @@ func _finish(bullet: Dictionary, result: Dictionary) -> void:
 	if is_rune() and result.has("blade"):
 		rune_hit = rune.receive_hit(result.blade, result.radial_distance, result.time)
 		result.kind = "hit" if rune_hit.accepted else "body"
+	if is_outpost() and result.kind == "hit":
+		var assessment: Dictionary = outpost.receive_hit(result.armor_id, result.uv, result.normal_speed, result.time) if health > 0 else {"accepted": false, "reason": "destroyed"}
+		result["outpost"] = assessment
+		if not assessment.accepted:
+			result.kind = "body"
 	stats[result.kind] += 1
 	if result.kind == "hit" and first_hit_time < 0.0:
 		first_hit_time = result.time
@@ -462,6 +505,8 @@ func _finish(bullet: Dictionary, result: Dictionary) -> void:
 		"time": result.time, "point": vec(result.point), "armor_id": result.get("armor_id", -1)}
 	if not rune_hit.is_empty():
 		event["rune"] = rune_hit
+	if result.has("outpost"):
+		event["outpost"] = result.outpost
 	if result.has("reason"):
 		event["reason"] = result.reason
 	var damage = 0
@@ -469,7 +514,7 @@ func _finish(bullet: Dictionary, result: Dictionary) -> void:
 	if not is_rune() and result.kind == "hit" and health > 0:
 		var armor_id: int = result.armor_id
 		armor_light_off_until[armor_id] = maxf(armor_light_off_until[armor_id], result.time + HIT_FLASH_DURATION)
-		damage = mini(health, int(bullet.get("damage", settings.weapon.damage)))
+		damage = mini(health, int(result.outpost.damage) if is_outpost() else int(bullet.get("damage", settings.weapon.damage)))
 		health -= damage
 		stats.damage += damage
 		if health == 0:
@@ -477,6 +522,8 @@ func _finish(bullet: Dictionary, result: Dictionary) -> void:
 			motion_stop_time = result.time
 			stats.kills += 1
 			killed = true
+			if is_outpost():
+				outpost.advance(result.time, true, settings.outpost.opponent_base_open)
 	event["damage"] = damage
 	event["health"] = health
 	event["killed"] = killed
@@ -511,13 +558,14 @@ func snapshot() -> Dictionary:
 	var pose = target_pose(time)
 	var orientation = Quaternion(Vector3(0, 0, 1), yaw) * Quaternion(Vector3(0, 1, 0), pitch)
 	var armors: Array[Dictionary] = []
-	for i in range(0 if is_rune() else 4):
+	for i in range(armor_count()):
 		var a = armor_pose(i, time)
 		armors.append({"id": i, "center": vec(a.center), "normal": vec(a.normal),
 			"normal_yaw": a.normal_yaw})
 	return {"protocol": "rm_aim_sim/2", "type": "state", "session_id": session_id,
 		"mode": (3 if rune.big else 2) if is_rune() else 1,
 		"rune": rune.snapshot() if is_rune() else {},
+		"outpost": outpost.snapshot(time) if is_outpost() else {},
 		"tick": tick, "sim_time": time, "paused": paused,
 		"gimbal": {"yaw": yaw, "pitch": pitch, "yaw_vel": yaw_velocity,
 			"pitch_vel": pitch_velocity, "origin": vec(settings.gimbal.origin),
@@ -596,3 +644,89 @@ func _rune_collision(bullet: Dictionary, start: float, end: float) -> Dictionary
 			best = {"kind": "ground", "time": at, "point": bullet_position(bullet, at),
 				"normal": Vector3(0, 0, 1)}
 	return best
+
+
+func is_outpost() -> bool:
+	return Presets.is_outpost(settings.appearance.robot)
+
+
+func armor_count() -> int:
+	return 0 if is_rune() else (3 if is_outpost() else 4)
+
+
+func armor_geometry() -> Dictionary:
+	return Outpost.GEOMETRY if is_outpost() else settings.target
+
+
+func outpost_base() -> Vector3:
+	return Vector3(settings.gimbal.origin.x + settings.camera.offset.x + settings.outpost.forward,
+		settings.gimbal.origin.y + settings.camera.offset.y + settings.outpost.lateral, 0)
+
+
+func rebuild_outpost() -> bool:
+	if not is_outpost() or health > 0 or time - outpost.started_at >= Outpost.REBUILD_LIMIT:
+		return false
+	health = 750
+	max_health = 1500
+	death_time = -1.0
+	armor_light_off_until.fill(0.0)
+	outpost.last_hits.fill(-INF)
+	events.append({"type": "outpost_rebuilt", "id": next_health_event_id,
+		"time": time, "health": health, "max_health": max_health})
+	next_health_event_id += 1
+	_trim_events()
+	return true
+
+
+static func _armor_local(point: Vector3, armor: Dictionary) -> Vector3:
+	var delta: Vector3 = point - armor.center
+	return Vector3(delta.dot(armor.tangent), delta.dot(armor.up), delta.dot(armor.normal))
+
+
+func _outpost_collision(bullet: Dictionary, start: float, end: float) -> Dictionary:
+	var p0 = bullet_position(bullet, start)
+	var p1 = bullet_position(bullet, end)
+	var best: Dictionary = {}
+	for part in outpost_parts:
+		var contact = Outpost.clip_segment(p0 - outpost_base(), p1 - outpost_base(), Outpost.part_planes(part))
+		if not contact.is_empty():
+			var at = lerpf(start, end, contact.fraction)
+			if best.is_empty() or at < best.time:
+				best = {"kind": "body", "time": at, "point": bullet_position(bullet, at),
+					"normal": contact.normal.normalized(), "reason": "outpost_structure"}
+	for i in range(armor_count()):
+		var a0 = armor_pose(i, start)
+		var a1 = armor_pose(i, end)
+		var contact = Outpost.panel_collision(_armor_local(p0, a0), _armor_local(p1, a1))
+		if contact.is_empty():
+			continue
+		var at = lerpf(start, end, contact.fraction)
+		if not best.is_empty() and at >= best.time:
+			continue
+		var armor = armor_pose(i, at)
+		var point = bullet_position(bullet, at)
+		var local = _armor_local(point, armor)
+		var uv = Vector2(local.x, local.y)
+		var front = contact.normal.z > 0.99
+		var effective = front and Geometry2D.is_point_in_polygon(uv, Outpost.hit_outline())
+		var panel_velocity = Vector3(0, 0, outpost.speed(at)).cross(point - outpost_base())
+		var velocity: Vector3 = bullet.velocity + Vector3(0, 0, -settings.weapon.gravity * (at - bullet.born))
+		best = {"kind": "hit" if effective else "body", "armor_id": i, "time": at, "point": point,
+			"uv": uv, "normal_speed": -(velocity - panel_velocity).dot(armor.normal),
+			"normal": armor.tangent * contact.normal.x + armor.up * contact.normal.y + armor.normal * contact.normal.z,
+			"reason": "outpost_armor" if effective else "outpost_frame"}
+	if p1.z <= 0.0:
+		var at = lerpf(start, end, clampf(p0.z / maxf(p0.z - p1.z, 1e-12), 0, 1))
+		if best.is_empty() or at < best.time:
+			best = {"kind": "ground", "time": at, "point": bullet_position(bullet, at), "normal": Vector3(0, 0, 1)}
+	return best
+
+
+func has_line_of_sight(origin: Vector3, point: Vector3) -> bool:
+	if not is_outpost():
+		return true
+	for part in outpost_parts:
+		var contact = Outpost.clip_segment(origin - outpost_base(), point - outpost_base(), Outpost.part_planes(part))
+		if not contact.is_empty() and contact.fraction < 1.0 - 1e-6:
+			return false
+	return true

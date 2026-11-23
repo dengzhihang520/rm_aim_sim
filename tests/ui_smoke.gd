@@ -423,8 +423,8 @@ func _run() -> void:
 	main.camera_resolution.select(4)
 	main.camera_resolution.item_selected.emit(4)
 	for index in range(main.robot_select.item_count):
-		if Presets.is_rune(main.robot_select.get_item_metadata(index)):
-			continue # Independent rune UI/rendering is exercised by power_rune_ui.gd.
+		if Presets.ROBOTS[main.robot_select.get_item_metadata(index)].type != "armor":
+			continue # Special targets have independent UI/rendering coverage.
 		main.robot_select.select(index)
 		main.robot_select.item_selected.emit(index)
 		main.team_select.select(index % 2)

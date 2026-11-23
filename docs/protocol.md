@@ -97,7 +97,7 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 | `weapon` | 弹速、射频、发射延迟、枪管长度、重力、单发基础伤害 `damage` |
 | `health` | 当前血量 `current`、上限 `maximum`、存活 `alive`、战亡仿真时间 `death_time`（未战亡为 -1） |
 | `appearance` | 车型、红蓝方、外观模型配置 |
-| `truth` | 当前靶车中心、旋转角、四块装甲中心与外法向，仅供调试评分 |
+| `truth` | 当前目标中心、旋转角、装甲中心与外法向，仅供调试评分 |
 | `camera` | 当前虚拟相机的理想标定和可见装甲关键点 |
 | `stats` | 累计出膛、命中、各类未命中、飞行/待出膛、命中率、实际扣血 `damage`、击毁 `kills` |
 | `events` | 最近 128 条发射/碰撞/设置血量事件，每个包可能重复携带同一事件 |
@@ -115,8 +115,8 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 | `weapon` | `speed` m/s、`rate` Hz、`delay` s、`barrel_length` m、`gravity` m/s²、`damage` HP；不包含 lifetime |
 | `health` | `current/maximum` 整数 HP，`alive` boolean，`death_time` 仿真秒，未死亡为 -1 |
 | `appearance` | `robot/team/armor_model/body_model` 字符串、`armor_scale/body_scale` 数值；body 字段为不加载的历史配置 |
-| `truth` | `center` 轨迹当前中心 `[x,y,z]`；`angle` 当前旋转角 rad；`armors` 始终有 4 个元素 |
-| `truth.armors[]` | `id` 0–3；`center` 装甲中心；`normal` 外侧单位法向；`normal_yaw` 外法向方位角 |
+| `truth` | `center` 轨迹当前中心 `[x,y,z]`；`angle` 当前旋转角 rad；`armors`：车辆4个、前哨站3个、符0个 |
+| `truth.armors[]` | `id`：车辆0–3、前哨站0–2；`center` 装甲中心；`normal` 外侧单位法向；`normal_yaw` 外法向方位角 |
 | `ipc`（状态） | `enabled` boolean，`status` 显示文本，`last_seq` 最近有效序号，`received/rejected` 累计接收/拒绝次数 |
 | `camera` | 见相机字段表；图像不在 state.json 内 |
 
@@ -127,8 +127,8 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 | 字段 | 含义 |
 |---|---|
 | `fired` | 已实际出膛的弹丸数，待出膛不计 |
-| `hit` | 已结算的装甲几何命中数，包括战亡后的几何命中 |
-| `body` | 兼容字段，当前没有车体碰撞，保持 0 |
+| `hit` | 车辆为已结算的装甲几何命中数（含战亡后）；前哨站/符按各自有效受击规则计数 |
+| `body` | 车辆保持0；前哨站/符的阻挡或未通过专用受击规则的接触计入此项 |
 | `ground` | 已结算的落地数 |
 | `expired` | 已结算的超时/越界清除数 |
 | `resolved` | `hit + body + ground + expired` |
@@ -158,7 +158,7 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 
 默认血量与基础伤害取 RMUL 2026 的 3V3 无增益规则。伤害在出膛时固定；血量归零后几何命中仍计数，实际伤害为 0，击毁不重复累计。界面设置血量会设置当前血量及上限并保留统计；重置本轮恢复配置血量、清空统计。
 
-战亡后目标在碰撞时的位置和角度停止，平移、自转配置开关和速度值保留；重置后按保存设置继续运动。显示层的反弹不产生第二条计分事件。当前目标只有四块装甲，没有车体碰撞；`stats.body` 及 `kind=body` 保留为协议兼容字段，当前运行中不会新增车体命中。
+战亡后目标在碰撞时的位置和角度停止，平移、自转配置开关和速度值保留；重置后按保存设置继续运动。显示层的反弹不产生第二条计分事件。车辆目标只有四块装甲，没有车体碰撞；前哨站的塔身/边框阻挡及专用受击规则另见文末扩展。
 
 存活时 `kind=hit` 使对应 `armor_id` 的灯条与光晕从碰撞时刻起熄灭 0.05 仿真秒，然后恢复阵营色；连续命中延长到最后一次命中后的 0.05 秒。暂停冻结计时，普通参数修改和显示模型重建不清除闪烁，显式恢复血量或重置本轮会清除。致死后所有灯条持续关闭。灯控同时作用于场景材质、相机曝光模型中的 LED 信号和理想灯条观测，不隐藏板体或改变碰撞几何、扣血与事件语义；该时长仅为仿真表现参数。
 
@@ -272,3 +272,7 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 `state.json` 和相机同帧元数据增加可选顶层 `mode`（1 自瞄、2 小符、3 大符）与 `rune` 状态对象，协议仍为 `rm_aim_sim/2`。旧包缺少 `mode` 时客户端按历史自瞄模式处理；空闲/暂停/外控开关由各客户端按已有策略停控。`rune` 为诊断与评分数据，不能当成检测结果送入实车算法。字段见 [能量机关](power_rune.md)。
 
 符的 `truth.armors`、`camera.armors` 为空，原始相机像素通过同一握手发布。符使用按钮启动的练习模式，不再输出 `rune.match_time/opportunities/attempt_remaining` 等赛程字段；`sim_time`、接收时间及图像采样时间的含义不变。切换涉及符的型号更新 `session_id`、停止旧控制并清除旧目标弹丸，客户端须重新绑定会话，不能继续下发旧 session 的命令。
+
+### 2026前哨站扩展
+
+`appearance.robot=outpost_2026`仍为正常自瞄mode=1。`truth.armors`包含三个模块，其id为0/1/2；`camera.armors`仍仅描述完整在视野内且未被塔身挡住的点亮模块。可选`outpost`对象提供`elapsed/direction/angular_velocity/phase/ever_destroyed/state/stop_reason`；state为rotating、returning或stopped，stop_reason为time_limit、destroyed或opponent_base_open（未触发为空）。该对象是场景诊断，不是视觉控制输入。训练重建追加`outpost_rebuilt`事件，含id/time/health/max_health，复用设置血量事件的递增编号；已有指令、图像、会话和标定协议不变。详见[outpost.md](outpost.md)。

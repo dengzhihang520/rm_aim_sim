@@ -22,6 +22,8 @@ var fields: Dictionary = {}
 var slider_labels: Dictionary = {}
 var armor_controls: VBoxContainer
 var rune_controls: VBoxContainer
+var outpost_controls: VBoxContainer
+var outpost_rebuild: Button
 var armor_model_controls: VBoxContainer
 var rune_start: Button
 var armor_profiles: Dictionary = {}
@@ -302,6 +304,14 @@ func _build_ui() -> void:
 	_add_number(armor_controls, "target.armor_width", "命中区宽（近似）/ m", 0.05, 0.3, 0.005)
 	_add_number(armor_controls, "target.armor_height", "命中区高（近似）/ m", 0.04, 0.3, 0.001)
 	_add_number(armor_controls, "target.lightbar_spacing", "灯条间距 / m", 0.05, 0.3, 0.005)
+	outpost_controls = VBoxContainer.new()
+	column.add_child(outpost_controls)
+	_add_number(outpost_controls, "outpost.forward", "前哨站距初始相机 / m", 1, 20, 0.1)
+	_add_number(outpost_controls, "outpost.lateral", "左右偏移（左正）/ m", -15, 15, 0.1)
+	_add_number(outpost_controls, "outpost.base_height", "底座高度 / m", 0, 2, 0.05)
+	_add_toggle(outpost_controls, "outpost.opponent_base_open", "对方基地护甲已展开（触发停转）")
+	outpost_controls.add_child(_label("2026 前哨站 · 三装甲 · 1500 HP\n17mm：普通 20 / 中心暴击 30；方向每轮随机。\n3 分钟后停转，重建不恢复旋转。", 12, Color("91acbb"), true))
+	outpost_rebuild = _add_button(outpost_controls, "模拟重建 · 750 HP（训练触发）", _rebuild_outpost)
 	rune_controls = VBoxContainer.new()
 	column.add_child(rune_controls)
 	_add_number(rune_controls, "rune.forward", "符距初始相机前后 / m", 1, 20, 0.1)
@@ -530,8 +540,9 @@ func _apply_fields(changed_path: String = "") -> void:
 		_update_height_limits()
 	var s = model.settings.duplicate(true)
 	for path in fields:
-		if path == "target.radius" or (model.is_rune() and path.begins_with("target.")) \
-				or (not model.is_rune() and path.begins_with("rune.")):
+		if path == "target.radius" or ((model.is_rune() or model.is_outpost()) and path.begins_with("target.")) \
+				or (not model.is_rune() and path.begins_with("rune.")) \
+				or (not model.is_outpost() and path.begins_with("outpost.")):
 			continue
 		# Editing a control must not round-trip untouched settings through UI conversions.
 		if path != changed_path and not (changed_path == "camera" and path in ["camera.width", "camera.height"]):
@@ -567,6 +578,8 @@ func _apply_fields(changed_path: String = "") -> void:
 		message_label.text = error
 		return
 	var rebuild: bool = s.appearance != model.settings.appearance
+	if model.is_outpost():
+		rebuild = rebuild or s.outpost.base_height != model.settings.outpost.base_height
 	for key in ["module_width", "module_height", "lightbar_spacing", "lightbar_length"]:
 		rebuild = rebuild or s.target[key] != model.settings.target[key]
 	model.apply_settings(s, changed_path in ["target.max_health", "robot"])
@@ -609,11 +622,11 @@ func _sync_view() -> void:
 
 func _robot_selected(index: int) -> void:
 	var previous: String = model.settings.appearance.robot
-	if not Presets.is_rune(previous):
+	if Presets.ROBOTS[previous].type == "armor":
 		armor_profiles[previous] = model.settings.target.duplicate(true)
 	var name: String = robot_select.get_item_metadata(index)
 	var s = model.settings.duplicate(true)
-	if not Presets.is_rune(name) and armor_profiles.has(name):
+	if Presets.ROBOTS[name].type == "armor" and armor_profiles.has(name):
 		s.target = armor_profiles[name].duplicate(true)
 		s.appearance.robot = name
 	else:
@@ -622,8 +635,8 @@ func _robot_selected(index: int) -> void:
 	if not error.is_empty():
 		message_label.text = error
 		return
-	model.apply_settings(s, not Presets.is_rune(name))
-	if Presets.is_rune(previous) or Presets.is_rune(name):
+	model.apply_settings(s, Presets.ROBOTS[name].type == "armor")
+	if Presets.ROBOTS[previous].type != "armor" or Presets.ROBOTS[name].type != "armor":
 		bridge.reset_session()
 	world.rebuild_target()
 	_load_fields()
@@ -632,11 +645,20 @@ func _robot_selected(index: int) -> void:
 
 func _sync_target_controls() -> void:
 	var enabled: bool = model.is_rune()
-	armor_controls.visible = not enabled
-	armor_model_controls.visible = not enabled
+	var vehicle: bool = Presets.ROBOTS[model.settings.appearance.robot].type == "armor"
+	armor_controls.visible = vehicle
+	armor_model_controls.visible = vehicle
+	outpost_controls.visible = model.is_outpost()
 	rune_controls.visible = enabled
 	# Damage is an armor-only setting; ballistics and launch response remain shared.
-	fields["weapon.damage"].get_parent().visible = not enabled
+	fields["weapon.damage"].get_parent().visible = vehicle
+
+
+func _rebuild_outpost() -> void:
+	if not model.paused and model.rebuild_outpost():
+		message_label.text = "前哨站已重建：750 HP，保留本轮停转状态"
+		world.update_world()
+		_update_status()
 
 
 func _start_rune() -> void:
@@ -659,6 +681,11 @@ func _update_status() -> void:
 	health_label.text = "  靶车血量 %d / %d HP  ·  %s  ·  累计伤害 %d  ·  击毁 %d" % [
 		model.health, model.max_health, "存活" if model.health > 0 else "已击毁 / 灯条熄灭", s.damage, s.kills]
 	health_label.add_theme_color_override("font_color", Color("5be2d4") if model.health > 0 else Color("ff6a72"))
+	if model.is_outpost():
+		var state = model.outpost.snapshot(model.time)
+		var states = {"rotating": "旋转中", "returning": "停转归位中", "stopped": "已停转"}
+		health_label.text = "  前哨站（2026） · %d/%d HP · %.2f s · %s · ω %+.2f rad/s" % [model.health, model.max_health, state.elapsed, states[state.state], state.angular_velocity]
+		outpost_rebuild.disabled = model.paused or model.health > 0 or state.elapsed >= 300
 	if model.is_rune():
 		var rune_state = model.rune.snapshot()
 		health_label.text = "  %s（%d） · %s · 组 %d/5 · 击中 %d · %s" % [

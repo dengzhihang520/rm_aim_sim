@@ -14,6 +14,7 @@ static func defaults() -> Dictionary:
 			"armor_width": 0.135, "armor_height": 0.125, "armor_tilt": PI / 12.0,
 			"lightbar_spacing": 0.135, "lightbar_length": 0.056,
 			"module_width": 0.140, "module_height": 0.125, "max_health": -1},
+		"outpost": {"forward": 4.0, "lateral": 0.0, "base_height": 0.30, "opponent_base_open": false},
 		"rune": {"forward": 4.0, "lateral": 0.0, "height": 2.6, "heading": 0.0},
 		"gimbal": {"origin": Vector3(0, 0, 0.65), "barrel_length": 0.22,
 			"max_speed": 6.0, "max_acceleration": 50.0, "response_hz": 6.0,
@@ -47,7 +48,7 @@ static func load_file(path: String) -> Dictionary:
 	if result.appearance.robot is String:
 		result.appearance.robot = Presets.resolve_name(result.appearance.robot)
 	var robot = result.appearance.robot
-	if robot is String and Presets.ROBOTS.has(robot) and not Presets.is_rune(robot):
+	if robot is String and Presets.ROBOTS.has(robot) and Presets.ROBOTS[robot].type == "armor":
 		var preset: Dictionary = Presets.ROBOTS[robot]
 		var dimensions = {"armor_width": preset.width, "armor_height": preset.height,
 			"module_width": preset.module_width, "module_height": preset.module_height,
@@ -97,6 +98,7 @@ static func validate(s: Dictionary) -> String:
 		return type_error
 	var bounds = {
 		"appearance.body_scale": [0.001, 1000.0], "appearance.armor_scale": [0.001, 1000.0],
+		"outpost.forward": [1.0, 20.0], "outpost.lateral": [-15.0, 15.0], "outpost.base_height": [0.0, 2.0],
 		"rune.forward": [1.0, 20.0], "rune.lateral": [-15.0, 15.0],
 		"rune.height": [0.9, 5.0], "rune.heading": [-PI, PI],
 		"target.speed": [0.0, 10.0], "target.acceleration": [0.1, 50.0],
