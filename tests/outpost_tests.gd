@@ -110,7 +110,11 @@ func test_scene_and_physics() -> void:
 		var plate: Dictionary = sim.armor_pose(i, 0)
 		close_to(plate.center.z, 0.3 + Outpost.HEIGHTS[i], "plate height follows Fig.4-34")
 		close_to(Vector2(plate.center.x - sim.outpost_base().x, plate.center.y - sim.outpost_base().y).length(), 0.275, "plate trajectory radius")
-		close_to(plate.normal.z, sin(PI / 12), "middle plate inclination is15degrees")
+		close_to(plate.normal.z, -sin(PI / 12), "middle plate outward normal points15degrees down")
+		var radial: Vector3 = plate.center - sim.outpost_base()
+		radial.z = 0.0
+		check(plate.up.dot(radial.normalized()) > 0.0, "middle plate top leans away from the tower")
+		close_to(plate.normal.dot(plate.up), 0, "plate normal stays perpendicular to its up axis")
 	check(sim.snapshot().truth.armors.size() == 3 and sim.snapshot().mode == 1, "normal IPC publishes three armors in auto-aim mode")
 	var s: Dictionary = sim.settings.duplicate(true)
 	s.target.translate = true

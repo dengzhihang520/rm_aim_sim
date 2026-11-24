@@ -8,7 +8,8 @@ const REBUILD_LIMIT = 300.0
 const INITIAL_PHASE = PI
 const RADIUS = 0.275
 const HEIGHTS = [1.114, 1.318, 1.216]
-const TILT = PI / 12.0
+# 板面外法线向下15度，上沿向塔身外侧倾。
+const TILT = -PI / 12.0
 const HIT_INTERVAL = 0.050
 const MIN_NORMAL_SPEED = 12.0
 const GEOMETRY = {"module_width": 0.144, "module_height": 0.128,

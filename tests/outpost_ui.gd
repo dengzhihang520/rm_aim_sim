@@ -54,7 +54,13 @@ func run() -> void:
 	check(main.model.camera_observation().K == key, "selection does not change calibration")
 	check(not main.model.camera_observation().armors.is_empty(), "new target is automatically brought into the camera view")
 	check(main.world.outpost_view.guidance.visible, "live outpost has a green guidance lamp")
-	for plate in main.world.plates:
+	main.world.update_world()
+	for index in range(main.world.plates.size()):
+		var plate: Node3D = main.world.plates[index]
+		var pose: Dictionary = main.model.armor_pose(index, main.model.time)
+		check(plate.basis.z.is_equal_approx(main.world.to_engine(pose.normal)),
+			"rendered armor shares the physical downward normal")
+		check(pose.normal.z < 0.0, "rendered outpost armor faces downward")
 		check(plate.get_node("ArmorSticker").texture != null, "official outpost mark is loaded")
 		var mark: Image = plate.get_node("ArmorSticker").texture.get_image()
 		check(mark.get_pixel(295, 199).a > 0.9 and mark.get_pixel(295, 150).a < 0.1,
