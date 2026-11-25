@@ -38,11 +38,12 @@ func set_enabled(value: bool) -> void:
 	enabled = next_enabled
 	last_sequence = -1
 	last_receive_usec = 0
-	model.stop()
+	model.reset_command_session()
 	status = "等待外部指令" if enabled else "本地手动控制"
 
 
 func reset_session() -> void:
+	model.reset_command_session()
 	last_sequence = -1
 	last_receive_usec = 0
 	elapsed = interval
@@ -70,7 +71,13 @@ func poll(wall_dt: float) -> void:
 		state["publication"] = publication
 		state["publisher_id"] = publisher_id
 		state["ipc"] = {"enabled": enabled, "status": status,
-			"last_seq": last_sequence, "received": received, "rejected": rejected}
+			"last_seq": last_sequence, "received": received, "rejected": rejected,
+			"fire_events": true, "fire_event_timeout": timeout,
+			"last_fire_seq": model.last_fire_sequence,
+			"fire_received": model.fire_received_count,
+			"fire_consumed": model.fire_consumed_count,
+			"fire_expired": model.fire_expired_count,
+			"fire_cancelled": model.fire_cancelled_count}
 		ipc.write_json("state.json", state)
 
 
@@ -99,6 +106,39 @@ func accept_command(value: Variant, now_usec: int) -> bool:
 			valid = false
 	if not value.has("yaw") or not value.has("pitch"):
 		valid = false
+	if valid and value.has("fire_cancel_seq"):
+		var cancel = value.fire_cancel_seq
+		if not (cancel is int or cancel is float) or not is_finite(float(cancel)) \
+				or float(cancel) != floor(float(cancel)) or float(cancel) < -1 \
+				or float(cancel) > float(sequence):
+			valid = false
+	if valid and value.has("fire_events"):
+		var requests = value.fire_events
+		if not requests is Array or requests.size() > 64:
+			valid = false
+		else:
+			var previous = -1
+			var fresh = 0
+			for event in requests:
+				if not event is Dictionary:
+					valid = false
+					break
+				var event_seq = event.get("seq", -1)
+				var deadline = event.get("valid_until_unix_sec", NAN)
+				if not (event_seq is int or event_seq is float) or not is_finite(float(event_seq)) \
+						or float(event_seq) != floor(float(event_seq)) or float(event_seq) < 0 \
+						or float(event_seq) > float(sequence) or float(event_seq) <= previous:
+					valid = false
+					break
+				if not (deadline is int or deadline is float) or not is_finite(float(deadline)) \
+						or float(deadline) > Time.get_unix_time_from_system() + timeout + 0.1:
+					valid = false
+					break
+				previous = int(event_seq)
+				if previous > model.last_received_fire_sequence:
+					fresh += 1
+			if model.fire_events.size() + fresh > 64:
+				valid = false
 	if not valid:
 		rejected += 1
 		return false

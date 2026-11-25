@@ -23,7 +23,15 @@ var yaw_velocity = 0.0
 var pitch_velocity = 0.0
 var command: Dictionary = {}
 var projectiles: Array[Dictionary] = []
-var pending: Array[float] = []
+var pending: Array[Dictionary] = []
+var fire_events: Array[Dictionary] = []
+var last_fire_sequence = -1
+var last_fire_cancel_sequence = -1
+var last_received_fire_sequence = -1
+var fire_received_count = 0
+var fire_consumed_count = 0
+var fire_expired_count = 0
+var fire_cancelled_count = 0
 var events: Array[Dictionary] = []
 var impacts: Array[Dictionary] = []
 var stats: Dictionary
@@ -63,6 +71,14 @@ func reset(initial: Dictionary = {}) -> void:
 		"yaw_vel": 0.0, "pitch_vel": 0.0, "yaw_acc": 0.0, "pitch_acc": 0.0}
 	projectiles.clear()
 	pending.clear()
+	fire_events.clear()
+	last_fire_sequence = -1
+	last_fire_cancel_sequence = -1
+	last_received_fire_sequence = -1
+	fire_received_count = 0
+	fire_consumed_count = 0
+	fire_expired_count = 0
+	fire_cancelled_count = 0
 	events.clear()
 	impacts.clear()
 	stats = {"fired": 0, "hit": 0, "body": 0, "ground": 0, "expired": 0,
@@ -174,6 +190,13 @@ func apply_settings(updated: Dictionary, reset_health: bool = false) -> void:
 
 func set_command(value: Dictionary) -> void:
 	var was_firing = bool(command.fire)
+	var cancel_sequence = int(value.get("fire_cancel_seq", -1))
+	if cancel_sequence > last_fire_cancel_sequence:
+		_cancel_fire_events()
+		pending.clear()
+		last_fire_cancel_sequence = cancel_sequence
+		last_received_fire_sequence = maxi(last_received_fire_sequence, cancel_sequence)
+		last_fire_sequence = maxi(last_fire_sequence, cancel_sequence)
 	command = value.duplicate()
 	for key in ["yaw_vel", "pitch_vel", "yaw_acc", "pitch_acc"]:
 		if not command.has(key):
@@ -182,13 +205,38 @@ func set_command(value: Dictionary) -> void:
 	command.pitch = clampf(float(command.pitch), settings.gimbal.pitch_min, settings.gimbal.pitch_max)
 	if not command.control:
 		command.fire = false
+		_cancel_fire_events()
 		pending.clear()
+	elif command.has("fire_events"):
+		for event in command.fire_events:
+			if int(event.seq) > last_received_fire_sequence:
+				last_received_fire_sequence = int(event.seq)
+				fire_events.append(event.duplicate())
+				fire_received_count += 1
 	if command.fire and not was_firing:
 		next_trigger = maxf(next_trigger, time)
 
 
 func stop() -> void:
 	set_command({"control": false, "fire": false, "yaw": yaw, "pitch": pitch})
+
+
+func reset_command_session() -> void:
+	stop()
+	last_fire_sequence = -1
+	last_fire_cancel_sequence = -1
+	last_received_fire_sequence = -1
+
+
+func _cancel_fire_events() -> void:
+	for event in fire_events:
+		last_fire_sequence = maxi(last_fire_sequence, int(event.seq))
+		fire_cancelled_count += 1
+	fire_events.clear()
+	for launch in pending:
+		if launch.fire_seq >= 0:
+			last_fire_sequence = maxi(last_fire_sequence, int(launch.fire_seq))
+			fire_cancelled_count += 1
 
 
 static func forward(y: float, p: float) -> Vector3:
@@ -376,14 +424,39 @@ func _substep(dt: float) -> void:
 		pitch_velocity = move_toward(pitch_velocity, 0.0, settings.gimbal.max_acceleration * dt)
 		yaw = wrapf(yaw + yaw_velocity * dt, -PI, PI)
 		pitch = clampf(pitch + pitch_velocity * dt, settings.gimbal.pitch_min, settings.gimbal.pitch_max)
+	# A short fire pulse may already be false by the next render/physics boundary.
+	# Resolve its queued event once; held fire still follows the original weapon rate.
+	var wall = Time.get_unix_time_from_system()
+	while not fire_events.is_empty() and fire_events.front().valid_until_unix_sec < wall:
+		var expired = fire_events.pop_front()
+		last_fire_sequence = maxi(last_fire_sequence, int(expired.seq))
+		fire_expired_count += 1
+	if command.control and not fire_events.is_empty() and next_trigger <= end + 1e-9:
+		var event = fire_events.pop_front()
+		pending.append({"at": maxf(time, next_trigger) + settings.weapon.delay,
+			"fire_seq": int(event.seq), "valid_until_unix_sec": event.valid_until_unix_sec})
+		next_trigger = maxf(time, next_trigger) + 1.0 / settings.weapon.rate
 	if command.control and command.fire:
 		while next_trigger <= end + 1e-9:
-			pending.append(maxf(time, next_trigger) + settings.weapon.delay)
+			pending.append({"at": maxf(time, next_trigger) + settings.weapon.delay,
+				"fire_seq": -1, "valid_until_unix_sec": INF})
 			next_trigger = maxf(time, next_trigger) + 1.0 / settings.weapon.rate
-	while not pending.is_empty() and pending.front() <= end + 1e-9:
-		var release = pending.pop_front()
-		var weight = clampf((release - time) / dt, 0.0, 1.0)
-		_spawn(release, lerp_angle(old_yaw, yaw, weight), lerpf(old_pitch, pitch, weight))
+	while not pending.is_empty() and pending.front().at <= end + 1e-9:
+		var launch = pending.pop_front()
+		if launch.fire_seq >= 0:
+			last_fire_sequence = maxi(last_fire_sequence, int(launch.fire_seq))
+			if launch.valid_until_unix_sec < wall:
+				fire_expired_count += 1
+				continue
+		var weight = clampf((launch.at - time) / dt, 0.0, 1.0)
+		var before: int = stats.fired
+		_spawn(launch.at, lerp_angle(old_yaw, yaw, weight), lerpf(old_pitch, pitch, weight))
+		if launch.fire_seq >= 0:
+			if stats.fired > before:
+				fire_consumed_count += 1
+				events.back()["fire_seq"] = launch.fire_seq
+			else:
+				fire_cancelled_count += 1
 	var contacts: Array[Dictionary] = []
 	for i in range(projectiles.size() - 1, -1, -1):
 		var bullet = projectiles[i]

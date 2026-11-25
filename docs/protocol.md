@@ -276,3 +276,29 @@ direction = [cos(pitch)*cos(yaw), cos(pitch)*sin(yaw), -sin(pitch)]
 ### 2026前哨站扩展
 
 `appearance.robot=outpost_2026`仍为正常自瞄mode=1。`truth.armors`包含三个模块，其id为0/1/2；`camera.armors`仍仅描述完整在视野内且未被塔身挡住的点亮模块。可选`outpost`对象提供`elapsed/direction/angular_velocity/phase/ever_destroyed/state/stop_reason`；state为rotating、returning或stopped，stop_reason为time_limit、destroyed或opponent_base_open（未触发为空）。该对象是场景诊断，不是视觉控制输入。训练重建追加`outpost_rebuilt`事件，含id/time/health/max_health，复用设置血量事件的递增编号；已有指令、图像、会话和标定协议不变。详见[outpost.md](outpost.md)。
+
+## 可选可靠发射事件
+
+`rm_aim_sim/2`的state.ipc增加能力字段fire_events=true、fire_event_timeout（秒），及
+last_fire_seq、fire_received、fire_consumed、fire_expired、fire_cancelled。
+last_seq仍是指令接收确认；last_fire_seq是事件物理出膛、过期或取消后的处理确认。
+
+```json
+{"seq": 101, "control": true, "fire": false,
+ "fire_cancel_seq": 90,
+ "fire_events": [{"seq": 100, "valid_until_unix_sec": 1795600000.25}]}
+```
+
+以上为新增字段片段，完整指令仍须带原协议、会话、发布者及角度字段。事件编号使用
+产生发射上升沿的command.seq，列表按编号递增、最多64项；重传携带原编号及期限。
+false电平不抹除请求，物理循环按原射速和出膛延迟消费；重复事件不重复出弹。持续true
+仍按武器原射速连发，事件触发与电平触发共用射速限制，首发不重复。
+
+期限使用同机Unix系统时间，不使用sim_time，不得因重传而延期。过期请求只确认、不
+补射。fire_cancel_seq是最近停止指令编号，随恢复后的指令继续携带；新停止编号取消
+已排队的旧请求及待出膛项，即使停止电平本身被最新文件覆盖。暂停、看门狗和新会话
+同样清理旧请求。物理shot事件带fire_seq时可与原请求对应；连续电平产生的后续子弹
+没有独立请求编号。计数用于区分出弹、取消与过期，不能把请求数直接当命中数。
+
+旧客户端不发送事件列表时继续使用原电平控制，短脉冲无法保证跨渲染轮询交付。
+需要可靠脉冲的客户端须检查能力，并保留未确认请求直到last_fire_seq处理确认。
